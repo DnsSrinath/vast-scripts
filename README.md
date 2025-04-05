@@ -1,78 +1,148 @@
-# Vast.ai ComfyUI Setup Scripts
+# Vast.ai ComfyUI with WAN 2.1 Image to Video Support
 
-## 🧠 Overview
-This repository automates the complete setup of **ComfyUI** on **Vast.ai** instances, including extensions like **WAN 2.1**, **ControlNet**, and **video-to-video** support. It is designed to make deployment fast, consistent, and robust across instances.
+This repository contains scripts for setting up ComfyUI with WAN 2.1 Image to Video generation capabilities on Vast.ai instances. These scripts automate the installation, configuration, and execution of ComfyUI with specialized support for converting still images into animated videos using the latest WAN 2.1 models.
 
----
+## Table of Contents
 
-## 📜 Scripts
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Scripts Overview](#scripts-overview)
+- [Detailed Usage](#detailed-usage)
+- [Troubleshooting](#troubleshooting)
+- [Advanced Configuration](#advanced-configuration)
 
-### 1. `universal_comfyui_setup.sh`
-- Universal one-command installer
-- Automatically downloads all other setup scripts
-- Installs core dependencies, extensions, and models
-- Configures persistent auto-start service
-- Runs system diagnostics and logs setup output
+## Features
 
-### 2. `setup_comfyui.sh`
-- Installs ComfyUI
-- Creates directory structure (`models/`, `custom_nodes/`)
-- Installs Python and base requirements
+- **One-command setup** of ComfyUI with WAN 2.1 Image to Video support
+- **Automatic model downloading** and verification
+- **Optimized configurations** for RTX 3090 GPUs
+- **Automatic workflow loading** for easier use
+- **Detailed diagnostic information** and troubleshooting guides
+- **Container-aware** scripts designed specifically for Vast.ai environments
 
-### 3. `setup_extensions.sh`
-- Adds essential ComfyUI custom nodes
-- Installs:
-  - WAN Node Suite 2.1
-  - Impact Pack
-  - ControlNet preprocessors
-  - Interpolation, IP Adapter, rgthree, and more
+## Quick Start
 
-### 4. `start_comfyui.sh`
-- Launches ComfyUI on port `8188`
-- Supports CORS headers
-- Backgrounds the server with logging
-
-### 5. `download_models.sh`
-- Downloads:
-  - Stable Diffusion v1.5 model
-  - ControlNet `.pth` models (Depth, Canny)
-- Ensures correct folder structure for `models/checkpoints` and `models/controlnet`
-
----
-
-## 🚀 How to Use on Vast.ai
-
-
-# 1. Download and run core ComfyUI setup
+1. Clone this repository:
 ```bash
-cd /workspace
-curl -L -o setup_comfyui.sh https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/setup_comfyui.sh
-chmod +x setup_comfyui.sh && ./setup_comfyui.sh
+git clone https://github.com/DnsSrinath/vast-scripts.git
+cd vast-scripts
 ```
 
-# 2. Download and run extension installer
+2. Run the universal setup script:
 ```bash
-cd /workspace
-rm -rf ComfyUI/custom_nodes/*
-curl -L -o setup_extensions.sh https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/setup_extensions.sh
-chmod +x setup_extensions.sh && ./setup_extensions.sh
+./universal_comfyui_setup.sh
 ```
 
-# 3. Download base and ControlNet models
+This will:
+- Install ComfyUI and all dependencies
+- Download WAN 2.1 models
+- Set up the workflow
+- Start the ComfyUI server
+
+## Troubleshooting Guide
+
+If the universal setup script fails, you can run individual components separately:
+
+### 1. Install ComfyUI
 ```bash
-curl -L -o download_models.sh https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/download_models.sh
-chmod +x download_models.sh && ./download_models.sh
+./setup_comfyui.sh
+```
+This will:
+- Set up Python environment
+- Install ComfyUI and core dependencies
+- Create necessary directories
+
+### 2. Download Models
+```bash
+./download_models.sh
+```
+This will:
+- Download WAN 2.1 models
+- Verify model integrity
+- Set up model directories
+
+### 3. Set Up Workflow
+```bash
+./setup_wan_i2v_workflow.sh
+```
+This will:
+- Download workflow files
+- Set up workflow directory
+- Verify workflow configuration
+
+### 4. Start ComfyUI Server
+```bash
+./start_comfyui.sh
+```
+This will:
+- Check GPU availability
+- Verify port availability
+- Start ComfyUI server
+
+### Common Issues and Solutions
+
+1. **Python Environment Issues**
+   - Ensure Python 3.10+ is installed
+   - Check if pip is up to date
+   - Verify virtual environment activation
+
+2. **Model Download Failures**
+   - Check internet connectivity
+   - Verify disk space
+   - Try running `download_models.sh` with `--force` flag
+
+3. **Server Startup Issues**
+   - Check if port 8188 is available
+   - Verify GPU drivers
+   - Check CUDA installation
+
+4. **Workflow Setup Issues**
+   - Verify model files exist
+   - Check workflow JSON format
+   - Ensure all dependencies are installed
+
+## Directory Structure
+
+```
+vast-scripts/
+├── universal_comfyui_setup.sh  # Main setup script
+├── setup_comfyui.sh           # ComfyUI installation
+├── download_models.sh         # Model download
+├── setup_wan_i2v_workflow.sh  # Workflow setup
+├── start_comfyui.sh          # Server startup
+├── common_utils.sh           # Shared utilities
+└── workflows/               # Workflow files
+    └── wan_i2v_workflow.json
 ```
 
-# 4. Start ComfyUI server manually
-```bash
-curl -L -o start_comfyui.sh https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/start_comfyui.sh
-chmod +x start_comfyui.sh && ./start_comfyui.sh
-```
+## Requirements
 
+- Python 3.10 or higher
+- CUDA-capable GPU
+- 16GB+ RAM
+- 20GB+ free disk space
+- Internet connection
 
-### ✅ Universal Setup (Recommended)
-Run this from inside your Vast.ai container:
+## Logs and Diagnostics
 
-```bash
-cd /workspace && curl -L -o universal_comfyui_setup.sh https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/universal_comfyui_setup.sh && chmod +x universal_comfyui_setup.sh && ./universal_comfyui_setup.sh
+- Main log: `comfyui_setup.log`
+- Diagnostic log: `comfyui_setup_diagnostics.log`
+- Model download log: `model_download.log`
+- Model diagnostic log: `model_download_diagnostics.log`
+
+## Support
+
+For issues and support:
+1. Check the diagnostic logs
+2. Run individual scripts with `--debug` flag
+3. Open an issue on GitHub
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- ComfyUI team for the amazing framework
+- WAN 2.1 team for the Image to Video models
+- Vast.ai for providing the infrastructure
