@@ -357,9 +357,14 @@ main() {
     run_command "pip install -r requirements.txt" "Failed to install ComfyUI dependencies" || \
         error_exit "ComfyUI dependencies installation failed"
     
+    # Make all scripts executable
+    log "Making scripts executable..." "$GREEN"
+    cd "$WORKSPACE/vast-scripts" || error_exit "Failed to change to vast-scripts directory"
+    run_command "chmod +x *.sh" "Failed to make scripts executable" || \
+        error_exit "Failed to make scripts executable"
+    
     # Download models
     log "Downloading WAN 2.1 models..." "$GREEN"
-    cd "$WORKSPACE/vast-scripts" || error_exit "Failed to change to vast-scripts directory"
     ./download_models.sh || error_exit "Model download failed"
     
     # Setup workflow
