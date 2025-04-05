@@ -281,6 +281,12 @@ main() {
     # Check system compatibility
     check_system_compatibility || error_exit "System compatibility check failed"
     
+    # Remove existing ComfyUI directory if it exists
+    if [ -d "$COMFYUI_DIR" ]; then
+        log "Removing existing ComfyUI directory..." "$YELLOW"
+        rm -rf "$COMFYUI_DIR" || error_exit "Failed to remove existing ComfyUI directory"
+    fi
+    
     # Clone ComfyUI repository
     log "Cloning ComfyUI repository..." "$GREEN"
     run_command "git clone https://github.com/comfyanonymous/ComfyUI.git \"$COMFYUI_DIR\"" "Failed to clone ComfyUI repository" || \
