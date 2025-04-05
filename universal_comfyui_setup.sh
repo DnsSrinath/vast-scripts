@@ -398,11 +398,10 @@ main() {
     mkdir -p "$COMFYUI_DIR/models/"{diffusion_models,text_encoders,clip_vision,vae} || \
         error_exit "Failed to create model directories"
     
-    # Install huggingface_hub if not already installed
-    if ! python3 -c "import huggingface_hub" &> /dev/null; then
-        run_command "pip install huggingface_hub" "Failed to install huggingface_hub" || \
-            error_exit "Failed to install huggingface_hub"
-    fi
+    # Install required Python packages
+    log "Installing required Python packages..." "$GREEN"
+    run_command "pip install --upgrade huggingface_hub tqdm requests" "Failed to install Python packages" || \
+        error_exit "Failed to install required Python packages"
     
     # Download models using huggingface_hub
     cd "$COMFYUI_DIR/models" || error_exit "Failed to change to models directory"
@@ -412,15 +411,34 @@ main() {
 import os
 import sys
 import time
+import requests
+from pathlib import Path
 from huggingface_hub import hf_hub_download, login
 from tqdm import tqdm
 
-# Login to Hugging Face (anonymous access)
-try:
-    login()
-except Exception as e:
-    print(f"Warning: Failed to login to Hugging Face: {e}")
-    print("Continuing with anonymous access...")
+def download_with_progress(url, local_path, desc):
+    """Download a file with progress bar."""
+    try:
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
+        total_size = int(response.headers.get('content-length', 0))
+        block_size = 1024  # 1 Kibibyte
+        
+        with open(local_path, 'wb') as file, tqdm(
+            desc=desc,
+            total=total_size,
+            unit='iB',
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as bar:
+            for data in response.iter_content(block_size):
+                size = file.write(data)
+                bar.update(size)
+        return True
+    except Exception as e:
+        print(f"Error downloading {url}: {e}")
+        return False
 
 # Model repository and files
 repo_id = "DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S"
@@ -431,39 +449,63 @@ files = {
     "vae": "wan_2.1_vae.safetensors"
 }
 
+# Try to login to Hugging Face (anonymous access)
+try:
+    login()
+except Exception as e:
+    print(f"Warning: Failed to login to Hugging Face: {e}")
+    print("Continuing with anonymous access...")
+
 # Download each file with progress tracking
+success = True
 for dir_name, file_name in files.items():
     try:
-        print(f"Downloading {file_name} to {dir_name}...")
+        print(f"\nDownloading {file_name} to {dir_name}...")
         
-        # Create a progress bar
-        progress_bar = tqdm(total=100, desc=f"Downloading {file_name}", unit="%")
+        # Ensure directory exists
+        os.makedirs(dir_name, exist_ok=True)
+        local_path = os.path.join(dir_name, file_name)
         
-        # Define a callback to update the progress bar
-        def progress_callback(current, total):
-            if total > 0:
-                percentage = (current / total) * 100
-                progress_bar.update(percentage - progress_bar.n)
+        # Try downloading with huggingface_hub first
+        try:
+            hf_hub_download(
+                repo_id=repo_id,
+                filename=file_name,
+                local_dir=dir_name,
+                local_dir_use_symlinks=False,
+                resume_download=True,
+                force_download=True
+            )
+            print(f"Successfully downloaded {file_name} using huggingface_hub")
+        except Exception as e:
+            print(f"Failed to download with huggingface_hub: {e}")
+            print("Trying direct download...")
+            
+            # Try direct download as fallback
+            url = f"https://huggingface.co/{repo_id}/resolve/main/{file_name}"
+            if not download_with_progress(url, local_path, f"Downloading {file_name}"):
+                success = False
+                print(f"Failed to download {file_name}")
+                continue
         
-        # Download the file with progress tracking
-        hf_hub_download(
-            repo_id=repo_id,
-            filename=file_name,
-            local_dir=dir_name,
-            local_dir_use_symlinks=False,
-            resume_download=True,
-            force_download=True,
-            progress_callback=progress_callback
-        )
+        # Verify file exists and has size
+        if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+            success = False
+            print(f"Download verification failed for {file_name}")
+            continue
+            
+        print(f"Successfully downloaded and verified {file_name}")
         
-        # Close the progress bar
-        progress_bar.close()
-        print(f"Successfully downloaded {file_name}")
     except Exception as e:
-        print(f"Error downloading {file_name}: {e}")
-        sys.exit(1)
+        print(f"Error processing {file_name}: {e}")
+        success = False
+        continue
 
-print("All models downloaded successfully!")
+if not success:
+    print("Some downloads failed. Please check the errors above.")
+    sys.exit(1)
+
+print("\nAll models downloaded successfully!")
 EOF
     
     # Make the script executable
