@@ -10,6 +10,7 @@ This repository contains scripts for setting up ComfyUI with WAN 2.1 Image to Vi
 - [Detailed Usage](#detailed-usage)
 - [Troubleshooting](#troubleshooting)
 - [Advanced Configuration](#advanced-configuration)
+- [Quick Test](#quick-test)
 
 ## Features
 
@@ -100,6 +101,65 @@ This will:
    - Verify model files exist
    - Check workflow JSON format
    - Ensure all dependencies are installed
+
+## Quick Test
+
+To quickly verify if your ComfyUI installation is working correctly, you can run this test script:
+
+```bash
+# Create a test script
+cat > /workspace/test_comfyui.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# Check if ComfyUI is installed
+if [ ! -d "/workspace/ComfyUI" ]; then
+  echo "❌ ComfyUI directory not found"
+  exit 1
+fi
+
+# Check if models are downloaded
+if [ ! -f "/workspace/ComfyUI/models/checkpoints/wan_v2.1.safetensors" ]; then
+  echo "❌ WAN 2.1 model not found"
+  exit 1
+fi
+
+if [ ! -f "/workspace/ComfyUI/models/vae/wan_v2.1_vae.safetensors" ]; then
+  echo "❌ WAN 2.1 VAE model not found"
+  exit 1
+fi
+
+# Check if server is running
+if ! pgrep -f "python.*main.py" > /dev/null; then
+  echo "❌ ComfyUI server not running"
+  exit 1
+fi
+
+# Check if port is accessible
+if ! curl -s http://localhost:8188 > /dev/null; then
+  echo "❌ ComfyUI web interface not accessible"
+  exit 1
+fi
+
+echo "✅ ComfyUI installation verified successfully"
+echo "✅ WAN 2.1 models verified"
+echo "✅ ComfyUI server is running"
+echo "✅ Web interface is accessible"
+echo ""
+echo "Access URL: http://$(hostname -I | awk '{print $1}'):8188"
+EOF
+
+# Make it executable and run
+chmod +x /workspace/test_comfyui.sh
+./workspace/test_comfyui.sh
+```
+
+This script will:
+1. Check if the ComfyUI directory exists
+2. Verify that the WAN 2.1 models are downloaded
+3. Confirm that the ComfyUI server is running
+4. Test if the web interface is accessible
+5. Display the access URL if everything is working correctly
 
 ## Directory Structure
 
@@ -220,50 +280,3 @@ log "Cleaning up temporary files..."
 rm -rf "$WORKSPACE/temp_downloads" 2>/dev/null || true
 
 log "Startup process completed"
-```
-
-## Create a test script
-cat > /workspace/test_comfyui.sh << 'EOF'
-#!/bin/bash
-set -euo pipefail
-
-# Check if ComfyUI is installed
-if [ ! -d "/workspace/ComfyUI" ]; then
-  echo "❌ ComfyUI directory not found"
-  exit 1
-fi
-
-# Check if models are downloaded
-if [ ! -f "/workspace/ComfyUI/models/checkpoints/wan_v2.1.safetensors" ]; then
-  echo "❌ WAN 2.1 model not found"
-  exit 1
-fi
-
-if [ ! -f "/workspace/ComfyUI/models/vae/wan_v2.1_vae.safetensors" ]; then
-  echo "❌ WAN 2.1 VAE model not found"
-  exit 1
-fi
-
-# Check if server is running
-if ! pgrep -f "python.*main.py" > /dev/null; then
-  echo "❌ ComfyUI server not running"
-  exit 1
-fi
-
-# Check if port is accessible
-if ! curl -s http://localhost:8188 > /dev/null; then
-  echo "❌ ComfyUI web interface not accessible"
-  exit 1
-fi
-
-echo "✅ ComfyUI installation verified successfully"
-echo "✅ WAN 2.1 models verified"
-echo "✅ ComfyUI server is running"
-echo "✅ Web interface is accessible"
-echo ""
-echo "Access URL: http://$(hostname -I | awk '{print $1}'):8188"
-EOF
-
-# Make it executable and run
-chmod +x /workspace/test_comfyui.sh
-./workspace/test_comfyui.sh
