@@ -39,7 +39,7 @@ log() {
     # Add to diagnostic log for critical issues
     if [[ "$log_level" == "ERROR" || "$log_level" == "WARNING" ]]; then
         echo "[${timestamp}] [$log_level] $message" >> "$DIAGNOSTIC_LOG"
-    }
+    fi
 }
 
 # Enhanced error handling with diagnostic information
