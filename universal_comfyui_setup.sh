@@ -181,12 +181,37 @@ prepare_system() {
         ["python3-venv"]="3.8.0"
     )
     
-    # Install packages with version verification and fallback methods
+    # Check and install packages with version verification and fallback methods
     for pkg in "${!packages[@]}"; do
         local required_version="${packages[$pkg]}"
-        log "Installing $pkg (required version >= $required_version)..." "$GREEN"
+        log "Checking $pkg (required version >= $required_version)..." "$GREEN"
         
-        # Try standard installation first
+        # Check if package is already installed using multiple methods
+        local is_installed=false
+        
+        # Method 1: Check using dpkg
+        if dpkg -l | grep -q "^ii  $pkg "; then
+            is_installed=true
+        fi
+        
+        # Method 2: Check if command exists
+        if command -v "$pkg" &> /dev/null; then
+            is_installed=true
+        fi
+        
+        # Method 3: Check for Python packages using pip
+        if [[ "$pkg" == "python3-pip" || "$pkg" == "python3-venv" ]]; then
+            if python3 -c "import pip" &> /dev/null || python3 -c "import venv" &> /dev/null; then
+                is_installed=true
+            fi
+        fi
+        
+        if [ "$is_installed" = true ]; then
+            log "$pkg is already installed" "$GREEN"
+            continue
+        fi
+        
+        # Try standard installation
         if ! run_command "sudo apt-get install -y $pkg" "Failed to install $pkg" 120 3 5; then
             log "Standard installation failed for $pkg, trying alternative method..." "$YELLOW" "WARNING"
             
@@ -247,7 +272,9 @@ prepare_system() {
         else
             log "No virtual environment tool found, creating basic Python environment" "$YELLOW" "WARNING"
             mkdir -p "${WORKSPACE}/venv/bin"
-            ln -s $(which python3) "${WORKSPACE}/venv/bin/python"
+            if [ ! -L "${WORKSPACE}/venv/bin/python" ]; then
+                ln -s $(which python3) "${WORKSPACE}/venv/bin/python"
+            fi
         fi
     else
         error_exit "Python3 not found, cannot create virtual environment"
@@ -271,6 +298,7 @@ tqdm>=4.65.0
 safetensors>=0.3.0
 transformers>=4.30.0
 accelerate>=0.20.0
+huggingface_hub>=0.19.0
 EOF
     
     log "Installing Python dependencies..." "$GREEN"
@@ -365,22 +393,76 @@ main() {
     
     # Download models with error handling
     log "Downloading WAN 2.1 models..." "$GREEN"
-    if [ -f "./download_models.sh" ]; then
-        if [ -x "./download_models.sh" ]; then
-            ./download_models.sh || {
-                log "Model download failed, checking for alternative download method..." "$YELLOW" "WARNING"
-                # Try alternative download method
-                mkdir -p "$COMFYUI_DIR/models/checkpoints" || error_exit "Failed to create models directory"
-                cd "$COMFYUI_DIR/models/checkpoints" || error_exit "Failed to change to checkpoints directory"
-                run_command "wget https://huggingface.co/DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S/resolve/main/wan2.1-i2v-14b-480p-Q4_K_S.gguf" \
-                    "Failed to download WAN model" || error_exit "WAN model download failed"
-            }
-        else
-            error_exit "download_models.sh exists but is not executable"
-        fi
-    else
-        error_exit "download_models.sh not found"
+    
+    # Create necessary model directories
+    mkdir -p "$COMFYUI_DIR/models/"{diffusion_models,text_encoders,clip_vision,vae} || \
+        error_exit "Failed to create model directories"
+    
+    # Install huggingface_hub if not already installed
+    if ! python3 -c "import huggingface_hub" &> /dev/null; then
+        run_command "pip install huggingface_hub" "Failed to install huggingface_hub" || \
+            error_exit "Failed to install huggingface_hub"
     fi
+    
+    # Download models using huggingface_hub
+    cd "$COMFYUI_DIR/models" || error_exit "Failed to change to models directory"
+    
+    # Create a Python script for downloading models
+    cat > download_models.py << 'EOF'
+import os
+import sys
+from huggingface_hub import hf_hub_download, login
+
+# Login to Hugging Face (anonymous access)
+try:
+    login()
+except Exception as e:
+    print(f"Warning: Failed to login to Hugging Face: {e}")
+    print("Continuing with anonymous access...")
+
+# Model repository and files
+repo_id = "DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S"
+files = {
+    "diffusion_models": "wan2.1-i2v-14b-480p-Q4_K_S.gguf",
+    "text_encoders": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "clip_vision": "clip_vision_h.safetensors",
+    "vae": "wan_2.1_vae.safetensors"
+}
+
+# Download each file
+for dir_name, file_name in files.items():
+    try:
+        print(f"Downloading {file_name} to {dir_name}...")
+        hf_hub_download(
+            repo_id=repo_id,
+            filename=file_name,
+            local_dir=dir_name,
+            local_dir_use_symlinks=False
+        )
+        print(f"Successfully downloaded {file_name}")
+    except Exception as e:
+        print(f"Error downloading {file_name}: {e}")
+        sys.exit(1)
+
+print("All models downloaded successfully!")
+EOF
+    
+    # Make the script executable
+    chmod +x download_models.py
+    
+    # Run the download script
+    log "Starting model download process..." "$GREEN"
+    run_command "python3 download_models.py" "Failed to download models" || error_exit "Model download failed"
+    
+    # Verify downloads
+    log "Verifying model downloads..." "$GREEN"
+    for dir in diffusion_models text_encoders clip_vision vae; do
+        if [ ! "$(ls -A $dir)" ]; then
+            error_exit "Model directory $dir is empty after download"
+        fi
+    done
+    
+    log "All WAN 2.1 models downloaded successfully!" "$GREEN"
     
     # Setup workflow with error handling
     log "Setting up WAN 2.1 workflow..." "$GREEN"
