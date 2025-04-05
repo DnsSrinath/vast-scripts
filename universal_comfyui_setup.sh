@@ -407,11 +407,13 @@ main() {
     # Download models using huggingface_hub
     cd "$COMFYUI_DIR/models" || error_exit "Failed to change to models directory"
     
-    # Create a Python script for downloading models
+    # Create a Python script for downloading models with progress tracking
     cat > download_models.py << 'EOF'
 import os
 import sys
+import time
 from huggingface_hub import hf_hub_download, login
+from tqdm import tqdm
 
 # Login to Hugging Face (anonymous access)
 try:
@@ -429,16 +431,33 @@ files = {
     "vae": "wan_2.1_vae.safetensors"
 }
 
-# Download each file
+# Download each file with progress tracking
 for dir_name, file_name in files.items():
     try:
         print(f"Downloading {file_name} to {dir_name}...")
+        
+        # Create a progress bar
+        progress_bar = tqdm(total=100, desc=f"Downloading {file_name}", unit="%")
+        
+        # Define a callback to update the progress bar
+        def progress_callback(current, total):
+            if total > 0:
+                percentage = (current / total) * 100
+                progress_bar.update(percentage - progress_bar.n)
+        
+        # Download the file with progress tracking
         hf_hub_download(
             repo_id=repo_id,
             filename=file_name,
             local_dir=dir_name,
-            local_dir_use_symlinks=False
+            local_dir_use_symlinks=False,
+            resume_download=True,
+            force_download=True,
+            progress_callback=progress_callback
         )
+        
+        # Close the progress bar
+        progress_bar.close()
         print(f"Successfully downloaded {file_name}")
     except Exception as e:
         print(f"Error downloading {file_name}: {e}")
@@ -450,9 +469,10 @@ EOF
     # Make the script executable
     chmod +x download_models.py
     
-    # Run the download script
+    # Run the download script with increased timeout (30 minutes)
     log "Starting model download process..." "$GREEN"
-    run_command "python3 download_models.py" "Failed to download models" || error_exit "Model download failed"
+    log "This may take a while. The models are large files..." "$YELLOW" "WARNING"
+    run_command "python3 download_models.py" "Failed to download models" 1800 3 10 || error_exit "Model download failed"
     
     # Verify downloads
     log "Verifying model downloads..." "$GREEN"
