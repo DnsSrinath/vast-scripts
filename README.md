@@ -104,7 +104,34 @@ This will:
 
 ## Quick Test
 
-To quickly verify if your ComfyUI installation is working correctly, you can run this test script:
+To quickly verify if your ComfyUI installation is working correctly, you can download and run our test script:
+
+```bash
+# Download the test script
+curl -L -o test_installation.sh https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/test_installation.sh
+
+# Make it executable
+chmod +x test_installation.sh
+
+# Run the test
+./test_installation.sh
+```
+
+This script will:
+1. Check if the ComfyUI directory exists
+2. Verify that the WAN 2.1 models are downloaded
+3. Confirm that the ComfyUI server is running
+4. Test if the web interface is accessible
+5. Check Python environment and GPU
+6. Display a summary of all tests
+7. Show the access URL if everything is working correctly
+
+The test script provides color-coded output with:
+- ✅ Green checkmarks for passed tests
+- ❌ Red X marks for failed tests
+- ⚠️ Yellow warnings for potential issues
+
+If you prefer to create the test script manually, you can use this code:
 
 ```bash
 # Create a test script
@@ -154,13 +181,6 @@ chmod +x /workspace/test_comfyui.sh
 ./workspace/test_comfyui.sh
 ```
 
-This script will:
-1. Check if the ComfyUI directory exists
-2. Verify that the WAN 2.1 models are downloaded
-3. Confirm that the ComfyUI server is running
-4. Test if the web interface is accessible
-5. Display the access URL if everything is working correctly
-
 ## Directory Structure
 
 ```
@@ -171,6 +191,7 @@ vast-scripts/
 ├── setup_wan_i2v_workflow.sh  # Workflow setup
 ├── start_comfyui.sh          # Server startup
 ├── common_utils.sh           # Shared utilities
+├── test_installation.sh      # Installation test script
 └── workflows/               # Workflow files
     └── wan_i2v_workflow.json
 ```
