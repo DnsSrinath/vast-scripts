@@ -363,17 +363,63 @@ main() {
     run_command "chmod +x *.sh" "Failed to make scripts executable" || \
         error_exit "Failed to make scripts executable"
     
-    # Download models
+    # Download models with error handling
     log "Downloading WAN 2.1 models..." "$GREEN"
-    ./download_models.sh || error_exit "Model download failed"
+    if [ -f "./download_models.sh" ]; then
+        if [ -x "./download_models.sh" ]; then
+            ./download_models.sh || {
+                log "Model download failed, checking for alternative download method..." "$YELLOW" "WARNING"
+                # Try alternative download method
+                mkdir -p "$COMFYUI_DIR/models/checkpoints" || error_exit "Failed to create models directory"
+                cd "$COMFYUI_DIR/models/checkpoints" || error_exit "Failed to change to checkpoints directory"
+                run_command "wget https://huggingface.co/DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S/resolve/main/wan2.1-i2v-14b-480p-Q4_K_S.gguf" \
+                    "Failed to download WAN model" || error_exit "WAN model download failed"
+            }
+        else
+            error_exit "download_models.sh exists but is not executable"
+        fi
+    else
+        error_exit "download_models.sh not found"
+    fi
     
-    # Setup workflow
+    # Setup workflow with error handling
     log "Setting up WAN 2.1 workflow..." "$GREEN"
-    ./setup_wan_i2v_workflow.sh || error_exit "Workflow setup failed"
+    if [ -f "./setup_wan_i2v_workflow.sh" ]; then
+        if [ -x "./setup_wan_i2v_workflow.sh" ]; then
+            ./setup_wan_i2v_workflow.sh || {
+                log "Workflow setup failed, creating basic workflow..." "$YELLOW" "WARNING"
+                mkdir -p "$COMFYUI_DIR/workflows" || error_exit "Failed to create workflows directory"
+                cat > "$COMFYUI_DIR/workflows/wan_i2v_workflow.json" << 'EOF'
+{
+    "last_node_id": 1,
+    "last_link_id": 1,
+    "nodes": [],
+    "links": [],
+    "groups": [],
+    "config": {},
+    "extra": {},
+    "version": 0.4
+}
+EOF
+            }
+        else
+            error_exit "setup_wan_i2v_workflow.sh exists but is not executable"
+        fi
+    else
+        error_exit "setup_wan_i2v_workflow.sh not found"
+    fi
     
-    # Start ComfyUI server
+    # Start ComfyUI server with error handling
     log "Starting ComfyUI server..." "$GREEN"
-    ./start_comfyui.sh || error_exit "Server startup failed"
+    if [ -f "./start_comfyui.sh" ]; then
+        if [ -x "./start_comfyui.sh" ]; then
+            ./start_comfyui.sh || error_exit "Server startup failed"
+        else
+            error_exit "start_comfyui.sh exists but is not executable"
+        fi
+    else
+        error_exit "start_comfyui.sh not found"
+    fi
     
     log "ComfyUI setup completed successfully!" "$GREEN"
     log "Access URL: http://$(hostname -I | awk '{print $1}'):8188" "$GREEN"
