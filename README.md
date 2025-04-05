@@ -153,12 +153,9 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 #!/bin/bash
 
 # On-start Script for Vast.ai ComfyUI Instance
-# This script runs automatically when your instance starts
-
-# Set strict error handling
 set -euo pipefail
 
-# Define workspace and log paths
+# Setup workspace and logs
 WORKSPACE="/workspace"
 LOG_FILE="$WORKSPACE/startup.log"
 DIAGNOSTIC_LOG="$WORKSPACE/startup_diagnostics.log"
@@ -166,64 +163,50 @@ DIAGNOSTIC_LOG="$WORKSPACE/startup_diagnostics.log"
 # Initialize logs
 echo "=== ComfyUI Startup Log ===" > "$LOG_FILE"
 echo "Started at: $(date)" >> "$LOG_FILE"
-echo "=== System Information ===" >> "$DIAGNOSTIC_LOG"
 nvidia-smi >> "$DIAGNOSTIC_LOG" 2>&1
 free -h >> "$DIAGNOSTIC_LOG" 2>&1
 df -h >> "$DIAGNOSTIC_LOG" 2>&1
 
-# Function to log messages
+# Log function
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
-# Function to handle errors
+# Error handling
 error_exit() {
     log "ERROR: $1"
-    echo "=== Error Diagnostics ===" >> "$DIAGNOSTIC_LOG"
     nvidia-smi >> "$DIAGNOSTIC_LOG" 2>&1
     ps aux >> "$DIAGNOSTIC_LOG" 2>&1
     exit 1
 }
 
-# 1. Setup Workspace
+# Setup workspace
 log "Setting up workspace..."
 cd "$WORKSPACE" || error_exit "Failed to change to workspace directory"
 
-# 2. Clone Repository (if not exists)
+# Clone repository if needed
 if [ ! -d "vast-scripts" ]; then
     log "Cloning repository..."
     git clone https://github.com/DnsSrinath/vast-scripts.git || error_exit "Failed to clone repository"
 fi
 
-# 3. Setup Scripts
+# Setup scripts
 cd vast-scripts || error_exit "Failed to change to vast-scripts directory"
 chmod +x *.sh || error_exit "Failed to make scripts executable"
 
-# 4. Run Universal Setup
-log "Starting universal setup..."
+# Run universal setup or individual components
+log "Starting setup..."
 if ./universal_comfyui_setup.sh; then
     log "Universal setup completed successfully"
 else
     log "Universal setup failed, attempting individual components..."
-    
-    # 4a. Core Installation
-    log "Running ComfyUI installation..."
     ./setup_comfyui.sh || error_exit "ComfyUI installation failed"
-    
-    # 4b. Model Download
-    log "Downloading models..."
     ./download_models.sh || error_exit "Model download failed"
-    
-    # 4c. Workflow Setup
-    log "Setting up workflow..."
     ./setup_wan_i2v_workflow.sh || error_exit "Workflow setup failed"
-    
-    # 4d. Start Server
-    log "Starting ComfyUI server..."
     ./start_comfyui.sh || error_exit "Server startup failed"
 fi
 
-# 5. Final Checks
+# Final checks
 log "Performing final checks..."
 if pgrep -f "python.*main.py" > /dev/null; then
     log "ComfyUI server is running"
@@ -232,8 +215,55 @@ else
     error_exit "ComfyUI server failed to start"
 fi
 
-# 6. Cleanup
+# Cleanup
 log "Cleaning up temporary files..."
 rm -rf "$WORKSPACE/temp_downloads" 2>/dev/null || true
 
 log "Startup process completed"
+```
+
+## Create a test script
+cat > /workspace/test_comfyui.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# Check if ComfyUI is installed
+if [ ! -d "/workspace/ComfyUI" ]; then
+  echo "❌ ComfyUI directory not found"
+  exit 1
+fi
+
+# Check if models are downloaded
+if [ ! -f "/workspace/ComfyUI/models/checkpoints/wan_v2.1.safetensors" ]; then
+  echo "❌ WAN 2.1 model not found"
+  exit 1
+fi
+
+if [ ! -f "/workspace/ComfyUI/models/vae/wan_v2.1_vae.safetensors" ]; then
+  echo "❌ WAN 2.1 VAE model not found"
+  exit 1
+fi
+
+# Check if server is running
+if ! pgrep -f "python.*main.py" > /dev/null; then
+  echo "❌ ComfyUI server not running"
+  exit 1
+fi
+
+# Check if port is accessible
+if ! curl -s http://localhost:8188 > /dev/null; then
+  echo "❌ ComfyUI web interface not accessible"
+  exit 1
+fi
+
+echo "✅ ComfyUI installation verified successfully"
+echo "✅ WAN 2.1 models verified"
+echo "✅ ComfyUI server is running"
+echo "✅ Web interface is accessible"
+echo ""
+echo "Access URL: http://$(hostname -I | awk '{print $1}'):8188"
+EOF
+
+# Make it executable and run
+chmod +x /workspace/test_comfyui.sh
+./workspace/test_comfyui.sh
