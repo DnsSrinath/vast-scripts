@@ -503,19 +503,55 @@ async def download_file(url, local_path, desc):
         logger.error(f"Error downloading {url}: {e}")
         return False
 
+async def download_model(repo_id, file_name, dir_name):
+    """Download a single model file."""
+    try:
+        logger.info(f"\nPreparing download of {file_name} to {dir_name}...")
+        
+        # Ensure directory exists
+        os.makedirs(dir_name, exist_ok=True)
+        local_path = os.path.join(dir_name, file_name)
+        
+        # Try downloading with huggingface_hub first
+        try:
+            logger.info(f"Attempting to download {file_name} using huggingface_hub...")
+            hf_hub_download(
+                repo_id=repo_id,
+                filename=file_name,
+                local_dir=dir_name,
+                local_dir_use_symlinks=False,
+                resume_download=True,
+                force_download=True
+            )
+            logger.info(f"Successfully downloaded {file_name} using huggingface_hub")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to download with huggingface_hub: {e}")
+            logger.info("Trying direct download...")
+        
+        # Try direct download as fallback
+        url = f"https://huggingface.co/{repo_id}/resolve/main/{file_name}"
+        return await download_file(url, local_path, f"Downloading {file_name}")
+        
+    except Exception as e:
+        logger.error(f"Error preparing download of {file_name}: {e}")
+        return False
+
 async def download_models():
     """Download all models asynchronously."""
     # Model repository and files
     repo_id = "DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S"
-    files = {
-        "diffusion_models": "wan2.1-i2v-14b-480p-Q4_K_S.gguf",
-        "text_encoders": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-        "clip_vision": "clip_vision_h.safetensors",
-        "vae": "wan_2.1_vae.safetensors"
-    }
+    
+    # Define models in order of size (smallest first)
+    models = [
+        {"dir": "vae", "file": "wan_2.1_vae.safetensors"},
+        {"dir": "clip_vision", "file": "clip_vision_h.safetensors"},
+        {"dir": "text_encoders", "file": "umt5_xxl_fp8_e4m3fn_scaled.safetensors"},
+        {"dir": "diffusion_models", "file": "wan2.1-i2v-14b-480p-Q4_K_S.gguf"}
+    ]
     
     logger.info(f"Starting download of WAN 2.1 models from {repo_id}")
-    logger.info(f"Total files to download: {len(files)}")
+    logger.info(f"Total files to download: {len(models)}")
     
     # Try to login to Hugging Face (anonymous access)
     try:
@@ -526,52 +562,27 @@ async def download_models():
         logger.warning(f"Failed to login to Hugging Face: {e}")
         logger.warning("Continuing with anonymous access...")
     
-    # Download each file
-    tasks = []
-    for dir_name, file_name in files.items():
-        try:
-            logger.info(f"\nPreparing download of {file_name} to {dir_name}...")
-            
-            # Ensure directory exists
-            os.makedirs(dir_name, exist_ok=True)
-            local_path = os.path.join(dir_name, file_name)
-            
-            # Try downloading with huggingface_hub first
-            try:
-                logger.info(f"Attempting to download {file_name} using huggingface_hub...")
-                hf_hub_download(
-                    repo_id=repo_id,
-                    filename=file_name,
-                    local_dir=dir_name,
-                    local_dir_use_symlinks=False,
-                    resume_download=True,
-                    force_download=True
-                )
-                logger.info(f"Successfully downloaded {file_name} using huggingface_hub")
-                continue
-            except Exception as e:
-                logger.error(f"Failed to download with huggingface_hub: {e}")
-                logger.info("Trying direct download...")
-            
-            # Try direct download as fallback
-            url = f"https://huggingface.co/{repo_id}/resolve/main/{file_name}"
-            tasks.append(download_file(url, local_path, f"Downloading {file_name}"))
-            
-        except Exception as e:
-            logger.error(f"Error preparing download of {file_name}: {e}")
-            continue
-    
-    # Wait for all downloads to complete
-    logger.info(f"Waiting for {len(tasks)} downloads to complete...")
-    results = await asyncio.gather(*tasks)
+    # Download each file one by one
+    success = True
+    for model in models:
+        dir_name = model["dir"]
+        file_name = model["file"]
+        
+        logger.info(f"Downloading {file_name} to {dir_name}...")
+        if not await download_model(repo_id, file_name, dir_name):
+            logger.error(f"Failed to download {file_name}")
+            success = False
+            break
     
     # Verify downloads
-    success = True
-    for dir_name, file_name in files.items():
-        local_path = os.path.join(dir_name, file_name)
-        if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
-            logger.error(f"Download verification failed for {file_name}")
-            success = False
+    if success:
+        for model in models:
+            dir_name = model["dir"]
+            file_name = model["file"]
+            local_path = os.path.join(dir_name, file_name)
+            if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+                logger.error(f"Download verification failed for {file_name}")
+                success = False
     
     if not success:
         logger.error("Some downloads failed. Please check the errors above.")
