@@ -164,7 +164,13 @@ prepare_system() {
     log "Updating package lists..." "$GREEN"
     run_command "sudo apt-get update -y" "Failed to update package lists" 120 5 10
     
-    # Required packages with version checks
+    # Try to fix potential package manager issues
+    log "Checking and fixing package manager..." "$YELLOW"
+    run_command "sudo apt-get clean" "Failed to clean package cache"
+    run_command "sudo rm -rf /var/lib/apt/lists/*" "Failed to remove package lists"
+    run_command "sudo apt-get update -y" "Failed to update package lists after cleanup"
+    
+    # Required packages with version checks and alternative installation methods
     declare -A packages=(
         ["git"]="2.0.0"
         ["wget"]="1.0.0"
@@ -173,15 +179,35 @@ prepare_system() {
         ["python3"]="3.8.0"
         ["python3-pip"]="20.0.0"
         ["python3-venv"]="3.8.0"
-        ["software-properties-common"]="0.0.0"  # Version not critical
     )
     
-    # Install packages with version verification
+    # Install packages with version verification and fallback methods
     for pkg in "${!packages[@]}"; do
         local required_version="${packages[$pkg]}"
         log "Installing $pkg (required version >= $required_version)..." "$GREEN"
         
-        run_command "sudo apt-get install -y $pkg" "Failed to install $pkg" 120 3 5
+        # Try standard installation first
+        if ! run_command "sudo apt-get install -y $pkg" "Failed to install $pkg" 120 3 5; then
+            log "Standard installation failed for $pkg, trying alternative method..." "$YELLOW" "WARNING"
+            
+            case "$pkg" in
+                "python3-pip")
+                    # Alternative pip installation
+                    run_command "curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py" "Failed to download pip installer"
+                    run_command "python3 get-pip.py --user" "Failed to install pip" || \
+                        log "Pip installation failed, continuing..." "$YELLOW" "WARNING"
+                    rm -f get-pip.py
+                    ;;
+                "python3-venv")
+                    # Try installing python3-venv through python3
+                    run_command "python3 -m pip install --user virtualenv" "Failed to install virtualenv" || \
+                        log "Virtualenv installation failed, continuing..." "$YELLOW" "WARNING"
+                    ;;
+                *)
+                    log "No alternative installation method for $pkg, continuing..." "$YELLOW" "WARNING"
+                    ;;
+            esac
+        fi
         
         # Verify installation and version
         if ! command -v "$pkg" &> /dev/null; then
@@ -199,15 +225,40 @@ prepare_system() {
     done
     
     # Upgrade pip with retry logic
-    run_command "python3 -m pip install --upgrade pip" "Failed to upgrade pip" 120 3 5 || \
-        log "Pip upgrade failed, continuing..." "$YELLOW" "WARNING"
+    if command -v pip3 &> /dev/null; then
+        run_command "pip3 install --upgrade pip" "Failed to upgrade pip" 120 3 5 || \
+            log "Pip upgrade failed, continuing..." "$YELLOW" "WARNING"
+    elif command -v python3 &> /dev/null; then
+        run_command "python3 -m pip install --upgrade pip" "Failed to upgrade pip" 120 3 5 || \
+            log "Pip upgrade failed, continuing..." "$YELLOW" "WARNING"
+    else
+        log "No pip installation found, skipping upgrade" "$YELLOW" "WARNING"
+    fi
     
     # Create and activate virtual environment
     log "Setting up Python virtual environment..." "$GREEN"
-    run_command "python3 -m venv ${WORKSPACE}/venv" "Failed to create virtual environment" || \
-        error_exit "Virtual environment setup failed"
+    if command -v python3 &> /dev/null; then
+        if command -v venv &> /dev/null; then
+            run_command "python3 -m venv ${WORKSPACE}/venv" "Failed to create virtual environment" || \
+                error_exit "Virtual environment setup failed"
+        elif command -v virtualenv &> /dev/null; then
+            run_command "virtualenv ${WORKSPACE}/venv" "Failed to create virtual environment" || \
+                error_exit "Virtual environment setup failed"
+        else
+            log "No virtual environment tool found, creating basic Python environment" "$YELLOW" "WARNING"
+            mkdir -p "${WORKSPACE}/venv/bin"
+            ln -s $(which python3) "${WORKSPACE}/venv/bin/python"
+        fi
+    else
+        error_exit "Python3 not found, cannot create virtual environment"
+    fi
     
-    source "${WORKSPACE}/venv/bin/activate" || error_exit "Failed to activate virtual environment"
+    # Activate virtual environment if it exists
+    if [ -f "${WORKSPACE}/venv/bin/activate" ]; then
+        source "${WORKSPACE}/venv/bin/activate" || error_exit "Failed to activate virtual environment"
+    else
+        log "No virtual environment activation script found, using system Python" "$YELLOW" "WARNING"
+    fi
     
     # Install Python dependencies
     cat > "$REQUIREMENTS_FILE" << EOF
@@ -223,7 +274,15 @@ accelerate>=0.20.0
 EOF
     
     log "Installing Python dependencies..." "$GREEN"
-    run_command "pip install -r $REQUIREMENTS_FILE" "Failed to install Python dependencies" 600 3 10
+    if command -v pip &> /dev/null; then
+        run_command "pip install -r $REQUIREMENTS_FILE" "Failed to install Python dependencies" 600 3 10
+    elif command -v pip3 &> /dev/null; then
+        run_command "pip3 install -r $REQUIREMENTS_FILE" "Failed to install Python dependencies" 600 3 10
+    elif command -v python3 &> /dev/null; then
+        run_command "python3 -m pip install -r $REQUIREMENTS_FILE" "Failed to install Python dependencies" 600 3 10
+    else
+        error_exit "No pip installation found, cannot install Python dependencies"
+    fi
 }
 
 # Enhanced system compatibility check
