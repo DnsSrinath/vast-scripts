@@ -400,7 +400,7 @@ main() {
     
     # Install required Python packages
     log "Installing required Python packages..." "$GREEN"
-    run_command "pip install --upgrade huggingface_hub tqdm requests" "Failed to install Python packages" || \
+    run_command "pip install --upgrade huggingface_hub tqdm requests aiohttp" "Failed to install Python packages" || \
         error_exit "Failed to install required Python packages"
     
     # Download models using huggingface_hub
@@ -411,120 +411,178 @@ main() {
 import os
 import sys
 import time
+import asyncio
+import aiohttp
 import requests
+import logging
 from pathlib import Path
 from huggingface_hub import hf_hub_download, login
 from tqdm import tqdm
 
-def download_with_progress(url, local_path, desc):
-    """Download a file with progress bar."""
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("model_download.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+def log_download_info(file_name, file_size_mb):
+    """Log information about the file being downloaded."""
+    logger.info(f"Downloading {file_name} (Size: {file_size_mb:.2f} MB)")
+    logger.info(f"Estimated download time: {file_size_mb / 5:.2f} minutes at 5 MB/s")
+    logger.info(f"Estimated download time: {file_size_mb / 10:.2f} minutes at 10 MB/s")
+    logger.info(f"Estimated download time: {file_size_mb / 20:.2f} minutes at 20 MB/s")
+
+async def download_chunk(session, url, start, end, local_path, progress_bar):
+    """Download a chunk of a file."""
+    headers = {'Range': f'bytes={start}-{end}'}
     try:
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        
-        total_size = int(response.headers.get('content-length', 0))
-        block_size = 1024  # 1 Kibibyte
-        
-        with open(local_path, 'wb') as file, tqdm(
-            desc=desc,
-            total=total_size,
-            unit='iB',
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as bar:
-            for data in response.iter_content(block_size):
-                size = file.write(data)
-                bar.update(size)
-        return True
+        async with session.get(url, headers=headers) as response:
+            if response.status not in (200, 206):
+                logger.error(f"Failed to download chunk {start}-{end}: HTTP {response.status}")
+                return False
+            chunk = await response.read()
+            with open(local_path, 'rb+') as f:
+                f.seek(start)
+                f.write(chunk)
+            progress_bar.update(len(chunk))
+            return True
     except Exception as e:
-        print(f"Error downloading {url}: {e}")
+        logger.error(f"Error downloading chunk {start}-{end}: {e}")
         return False
 
-# Model repository and files
-repo_id = "DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S"
-files = {
-    "diffusion_models": "wan2.1-i2v-14b-480p-Q4_K_S.gguf",
-    "text_encoders": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-    "clip_vision": "clip_vision_h.safetensors",
-    "vae": "wan_2.1_vae.safetensors"
-}
-
-# Try to login to Hugging Face (anonymous access)
-try:
-    login()
-except Exception as e:
-    print(f"Warning: Failed to login to Hugging Face: {e}")
-    print("Continuing with anonymous access...")
-
-# Download each file with progress tracking
-success = True
-for dir_name, file_name in files.items():
+async def download_file(url, local_path, desc):
+    """Download a file in chunks with progress bar."""
     try:
-        print(f"\nDownloading {file_name} to {dir_name}...")
+        # Get file size
+        logger.info(f"Checking file size for {url}")
+        response = requests.head(url)
+        total_size = int(response.headers.get('content-length', 0))
+        total_size_mb = total_size / (1024 * 1024)
         
-        # Ensure directory exists
-        os.makedirs(dir_name, exist_ok=True)
-        local_path = os.path.join(dir_name, file_name)
+        if total_size == 0:
+            logger.warning(f"Could not determine file size for {url}")
+            return False
         
-        # Try downloading with huggingface_hub first
+        logger.info(f"File size: {total_size_mb:.2f} MB")
+        log_download_info(os.path.basename(local_path), total_size_mb)
+
+        # Create progress bar
+        progress_bar = tqdm(total=total_size, desc=desc, unit='B', unit_scale=True)
+        
+        # Create empty file
+        logger.info(f"Creating empty file: {local_path}")
+        with open(local_path, 'wb') as f:
+            f.write(b'\0' * total_size)
+        
+        # Download in chunks
+        chunk_size = 10 * 1024 * 1024  # 10MB chunks
+        chunks = [(i, min(i + chunk_size - 1, total_size - 1)) 
+                 for i in range(0, total_size, chunk_size)]
+        
+        logger.info(f"Downloading in {len(chunks)} chunks of {chunk_size / (1024 * 1024):.2f} MB each")
+        
+        start_time = time.time()
+        async with aiohttp.ClientSession() as session:
+            tasks = [download_chunk(session, url, start, end, local_path, progress_bar) 
+                    for start, end in chunks]
+            results = await asyncio.gather(*tasks)
+            
+        end_time = time.time()
+        download_time = end_time - start_time
+        download_speed = total_size / (1024 * 1024 * download_time)  # MB/s
+        
+        progress_bar.close()
+        logger.info(f"Download completed in {download_time:.2f} seconds at {download_speed:.2f} MB/s")
+        return all(results)
+    except Exception as e:
+        logger.error(f"Error downloading {url}: {e}")
+        return False
+
+async def download_models():
+    """Download all models asynchronously."""
+    # Model repository and files
+    repo_id = "DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S"
+    files = {
+        "diffusion_models": "wan2.1-i2v-14b-480p-Q4_K_S.gguf",
+        "text_encoders": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "clip_vision": "clip_vision_h.safetensors",
+        "vae": "wan_2.1_vae.safetensors"
+    }
+    
+    logger.info(f"Starting download of WAN 2.1 models from {repo_id}")
+    logger.info(f"Total files to download: {len(files)}")
+    
+    # Try to login to Hugging Face (anonymous access)
+    try:
+        logger.info("Attempting to login to Hugging Face (anonymous access)")
+        login()
+        logger.info("Successfully logged in to Hugging Face")
+    except Exception as e:
+        logger.warning(f"Failed to login to Hugging Face: {e}")
+        logger.warning("Continuing with anonymous access...")
+    
+    # Download each file
+    tasks = []
+    for dir_name, file_name in files.items():
         try:
-            hf_hub_download(
-                repo_id=repo_id,
-                filename=file_name,
-                local_dir=dir_name,
-                local_dir_use_symlinks=False,
-                resume_download=True,
-                force_download=True
-            )
-            print(f"Successfully downloaded {file_name} using huggingface_hub")
-        except Exception as e:
-            print(f"Failed to download with huggingface_hub: {e}")
-            print("Trying direct download...")
+            logger.info(f"\nPreparing download of {file_name} to {dir_name}...")
+            
+            # Ensure directory exists
+            os.makedirs(dir_name, exist_ok=True)
+            local_path = os.path.join(dir_name, file_name)
+            
+            # Try downloading with huggingface_hub first
+            try:
+                logger.info(f"Attempting to download {file_name} using huggingface_hub...")
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename=file_name,
+                    local_dir=dir_name,
+                    local_dir_use_symlinks=False,
+                    resume_download=True,
+                    force_download=True
+                )
+                logger.info(f"Successfully downloaded {file_name} using huggingface_hub")
+                continue
+            except Exception as e:
+                logger.error(f"Failed to download with huggingface_hub: {e}")
+                logger.info("Trying direct download...")
             
             # Try direct download as fallback
             url = f"https://huggingface.co/{repo_id}/resolve/main/{file_name}"
-            if not download_with_progress(url, local_path, f"Downloading {file_name}"):
-                success = False
-                print(f"Failed to download {file_name}")
-                continue
-        
-        # Verify file exists and has size
-        if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
-            success = False
-            print(f"Download verification failed for {file_name}")
-            continue
+            tasks.append(download_file(url, local_path, f"Downloading {file_name}"))
             
-        print(f"Successfully downloaded and verified {file_name}")
-        
-    except Exception as e:
-        print(f"Error processing {file_name}: {e}")
-        success = False
-        continue
-
-if not success:
-    print("Some downloads failed. Please check the errors above.")
-    sys.exit(1)
-
-print("\nAll models downloaded successfully!")
-EOF
+        except Exception as e:
+            logger.error(f"Error preparing download of {file_name}: {e}")
+            continue
     
-    # Make the script executable
-    chmod +x download_models.py
-    
-    # Run the download script with increased timeout (30 minutes)
-    log "Starting model download process..." "$GREEN"
-    log "This may take a while. The models are large files..." "$YELLOW" "WARNING"
-    run_command "python3 download_models.py" "Failed to download models" 1800 3 10 || error_exit "Model download failed"
+    # Wait for all downloads to complete
+    logger.info(f"Waiting for {len(tasks)} downloads to complete...")
+    results = await asyncio.gather(*tasks)
     
     # Verify downloads
-    log "Verifying model downloads..." "$GREEN"
-    for dir in diffusion_models text_encoders clip_vision vae; do
-        if [ ! "$(ls -A $dir)" ]; then
-            error_exit "Model directory $dir is empty after download"
-        fi
-    done
+    success = True
+    for dir_name, file_name in files.items():
+        local_path = os.path.join(dir_name, file_name)
+        if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+            logger.error(f"Download verification failed for {file_name}")
+            success = False
     
-    log "All WAN 2.1 models downloaded successfully!" "$GREEN"
+    if not success:
+        logger.error("Some downloads failed. Please check the errors above.")
+        sys.exit(1)
+    
+    logger.info("\nAll models downloaded successfully!")
+
+# Run the async download function
+if __name__ == "__main__":
+    logger.info("Starting model download script")
+    asyncio.run(download_models())
     
     # Setup workflow with error handling
     log "Setting up WAN 2.1 workflow..." "$GREEN"
