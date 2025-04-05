@@ -250,544 +250,64 @@ check_system_compatibility() {
         log "CUDA Version: $cuda_version" "$GREEN"
         
         if ! printf '%s\n%s\n' "11.0" "$cuda_version" | sort -V -C; then
-            log "Warning: CUDA version ($cuda_version) might be too old for optimal performance" "$YELLOW" "WARNING"
-        fi
-        
-        # GPU memory check
-        local gpu_memory=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -n 1)
-        log "GPU Memory: ${gpu_memory}MB" "$GREEN"
-        
-        if [ "$gpu_memory" -lt 8000 ]; then
-            log "Warning: Less than 8GB VRAM detected (${gpu_memory}MB). Some models may not work properly." "$YELLOW" "WARNING"
-        fi
-        
-        # GPU compute capability check
-        local compute_cap=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -n 1)
-        log "GPU Compute Capability: $compute_cap" "$GREEN"
-        
-        if (( $(echo "$compute_cap < 7.0" | bc -l) )); then
-            log "Warning: GPU compute capability ($compute_cap) might be too low for optimal performance" "$YELLOW" "WARNING"
+            log "CUDA version might be too old. Required >= 11.0, Found: $cuda_version" "$YELLOW" "WARNING"
         fi
     else
-        error_exit "No NVIDIA GPU detected. ComfyUI requires an NVIDIA GPU for operation."
+        error_exit "No NVIDIA GPU detected. This setup requires a CUDA-capable GPU."
     fi
     
     # Memory check
-    local total_memory=$(free -m | awk '/^Mem:/{print $2}')
-    log "Total System Memory: ${total_memory}MB" "$GREEN"
-    
-    if [ "$total_memory" -lt 16000 ]; then  # Less than 16GB
-        log "Warning: Less than 16GB RAM detected. Performance may be impacted." "$YELLOW" "WARNING"
+    local total_mem=$(free -g | awk '/^Mem:/{print $2}')
+    if [ "$total_mem" -lt 8 ]; then
+        error_exit "Insufficient memory. Required >= 8GB, Found: ${total_mem}GB"
     fi
     
     # Disk space check
-    local disk_space=$(df -m "$WORKSPACE" | awk 'NR==2 {print $4}')
-    log "Available Disk Space: ${disk_space}MB" "$GREEN"
-    
-    if [ "$disk_space" -lt 20000 ]; then  # Less than 20GB
-        log "Warning: Less than 20GB disk space available. You may run out of space." "$YELLOW" "WARNING"
+    local available_space=$(df -BG "$WORKSPACE" | awk 'NR==2 {print $4}' | sed 's/G//')
+    if [ "$available_space" -lt 20 ]; then
+        error_exit "Insufficient disk space. Required >= 20GB, Available: ${available_space}GB"
     fi
     
-    # Network connectivity check
-    log "Checking network connectivity..." "$GREEN"
-    if ! curl -Is https://github.com &>/dev/null; then
-        error_exit "Cannot connect to GitHub. Check your internet connection."
-    fi
-    
-    if ! curl -Is https://raw.githubusercontent.com &>/dev/null; then
-        error_exit "Cannot connect to GitHub raw content. Check your internet connection."
-    fi
-    
-    log "System compatibility check completed" "$GREEN"
+    log "System compatibility check passed!" "$GREEN"
 }
 
-# Enhanced script download with fallback URLs and verification
-download_setup_scripts() {
-    log "Downloading setup scripts from GitHub..." "$YELLOW"
-    
-    # Define scripts with fallback URLs and checksums
-    declare -A scripts=(
-        ["setup_comfyui.sh"]="setup_comfyui.sh|setup_comfyui_backup.sh"
-        ["setup_extensions.sh"]="setup_extensions.sh|setup_extensions_backup.sh"
-        ["start_comfyui.sh"]="start_comfyui.sh|start_comfyui_backup.sh"
-        ["download_models.sh"]="download_models.sh|download_models_backup.sh"
-        ["download_wan_i2v_models.sh"]="download_wan_i2v_models.sh|download_wan_i2v_models_backup.sh"
-        ["setup_wan_i2v_workflow.sh"]="setup_wan_i2v_workflow.sh|setup_wan_i2v_workflow_backup.sh"
-        ["run_wan_i2v.sh"]="run_wan_i2v.sh|run_wan_i2v_backup.sh"
-    )
-    
-    # Create temporary directory for downloads
-    local temp_download_dir="${TEMP_DIR}/scripts"
-    mkdir -p "$temp_download_dir"
-    
-    # Download and verify each script
-    for script in "${!scripts[@]}"; do
-        log "Downloading $script..." "$GREEN"
-        local script_paths=(${scripts[$script]//|/ })
-        local primary_path="${script_paths[0]}"
-        local backup_path="${script_paths[1]}"
-        local download_success=false
-        
-        # Try primary URL
-        if run_command "curl -L \"${BASE_RAW_URL}/${primary_path}\" -o \"${temp_download_dir}/${script}\"" \
-            "Failed to download $script from primary URL" 120 3 5; then
-            download_success=true
-        else
-            # Try backup URL
-            log "Primary download failed, trying backup URL..." "$YELLOW" "WARNING"
-            if run_command "curl -L \"${BASE_RAW_URL}/${backup_path}\" -o \"${temp_download_dir}/${script}\"" \
-                "Failed to download $script from backup URL" 120 3 5; then
-                download_success=true
-            fi
-        fi
-        
-        if [ "$download_success" = false ]; then
-            error_exit "Failed to download $script from all sources"
-        fi
-        
-        # Verify script integrity
-        if [ ! -s "${temp_download_dir}/${script}" ]; then
-            error_exit "Downloaded script $script is empty"
-        fi
-        
-        # Check if script is valid shell script
-        if ! bash -n "${temp_download_dir}/${script}"; then
-            error_exit "Downloaded script $script contains syntax errors"
-        fi
-        
-        # Move to final location and make executable
-        mv "${temp_download_dir}/${script}" "${WORKSPACE}/${script}" || \
-            error_exit "Failed to move $script to workspace"
-        
-        chmod +x "${WORKSPACE}/${script}" || \
-            error_exit "Failed to make $script executable"
-        
-        log "Successfully downloaded and verified $script" "$GREEN"
-    done
-    
-    # Clean up temporary directory
-    rm -rf "$temp_download_dir"
-}
-
-# Enhanced ComfyUI installation with dependency checks and error recovery
-install_comfyui() {
-    log "Installing ComfyUI..." "$YELLOW"
-    
-    # Check if ComfyUI directory already exists
-    if [ -d "$COMFYUI_DIR" ]; then
-        log "ComfyUI directory already exists. Checking installation..." "$YELLOW"
-        
-        # Verify installation
-        if [ -f "${COMFYUI_DIR}/main.py" ] && [ -d "${COMFYUI_DIR}/web" ]; then
-            log "Existing ComfyUI installation found. Checking for updates..." "$GREEN"
-            
-            # Try to update existing installation
-            cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
-            if run_command "git pull" "Failed to update ComfyUI" 300 3 5; then
-                log "ComfyUI updated successfully" "$GREEN"
-            else
-                log "Failed to update ComfyUI. Backing up and reinstalling..." "$YELLOW" "WARNING"
-                
-                # Backup existing installation
-                local backup_dir="${WORKSPACE}/ComfyUI_backup_$(date +%Y%m%d_%H%M%S)"
-                mv "$COMFYUI_DIR" "$backup_dir" || \
-                    error_exit "Failed to backup existing ComfyUI installation"
-                log "Existing installation backed up to $backup_dir" "$GREEN"
-            fi
-        else
-            log "Existing ComfyUI installation appears corrupted. Removing..." "$YELLOW" "WARNING"
-            rm -rf "$COMFYUI_DIR"
-        fi
-    fi
-    
-    # Fresh installation
-    if [ ! -d "$COMFYUI_DIR" ]; then
-        log "Performing fresh ComfyUI installation..." "$GREEN"
-        
-        # Clone repository with retry logic
-        run_command "git clone https://github.com/comfyanonymous/ComfyUI.git \"$COMFYUI_DIR\"" \
-            "Failed to clone ComfyUI repository" 600 3 10 || \
-            error_exit "ComfyUI installation failed"
-        
-        cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
-        
-        # Install Python dependencies
-        log "Installing ComfyUI Python dependencies..." "$GREEN"
-        run_command "pip install -r requirements.txt" \
-            "Failed to install ComfyUI dependencies" 600 3 10 || \
-            error_exit "Failed to install ComfyUI dependencies"
-    fi
-    
-    # Verify installation
-    log "Verifying ComfyUI installation..." "$GREEN"
-    
-    # Check for required files and directories
-    local required_files=("main.py" "requirements.txt")
-    local required_dirs=("web" "nodes" "models")
-    
-    for file in "${required_files[@]}"; do
-        if [ ! -f "${COMFYUI_DIR}/${file}" ]; then
-            error_exit "Missing required file: ${file}"
-        fi
-    done
-    
-    for dir in "${required_dirs[@]}"; do
-        if [ ! -d "${COMFYUI_DIR}/${dir}" ]; then
-            error_exit "Missing required directory: ${dir}"
-        fi
-    done
-    
-    # Verify Python environment
-    cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
-    if ! python3 -c "
-import torch
-import numpy
-import safetensors
-import PIL
-from PIL import Image
-" 2>/dev/null; then
-        error_exit "Missing required Python dependencies"
-    fi
-    
-    log "ComfyUI installation verified successfully" "$GREEN"
-    
-    # Install extensions
-    log "Installing ComfyUI extensions..." "$GREEN"
-    if run_command "${WORKSPACE}/setup_extensions.sh" "Extensions installation failed" 900 3 10; then
-        log "Extensions installed successfully" "$GREEN"
-    else
-        log "Warning: Some extensions failed to install. Check the logs for details." "$YELLOW" "WARNING"
-    fi
-    
-    # Generate installation report
-    {
-        echo "=== ComfyUI Installation Report ==="
-        echo "Timestamp: $(date)"
-        echo ""
-        echo "=== Installation Directory ==="
-        ls -la "$COMFYUI_DIR"
-        echo ""
-        echo "=== Python Dependencies ==="
-        pip freeze | grep -iE "torch|numpy|safetensors|pillow"
-        echo ""
-        echo "=== GPU Information ==="
-        if command -v nvidia-smi &> /dev/null; then
-            nvidia-smi
-        fi
-        echo ""
-        echo "=== Installation Size ==="
-        du -sh "$COMFYUI_DIR"
-    } >> "$DIAGNOSTIC_LOG"
-}
-
-setup_wan_i2v() {
-    log "Setting up WAN 2.1 Image to Video support..." "$YELLOW"
-    
-    # Run the WAN 2.1 Image to Video model download script with retry logic
-    log "Downloading WAN 2.1 Image to Video models..." "$GREEN"
-    for _ in {1..3}; do
-        if run_command "${WORKSPACE}/download_wan_i2v_models.sh" "WAN model download failed" 3600; then
-            break
-        fi
-        log "WAN model download failed. Retrying..." "$YELLOW" "WARNING"
-        sleep 10
-    done
-    
-    # Run the workflow setup script with retry logic
-    log "Setting up WAN 2.1 Image to Video workflow..." "$GREEN"
-    for _ in {1..3}; do
-        if run_command "${WORKSPACE}/setup_wan_i2v_workflow.sh" "WAN workflow setup failed" 300; then
-            break
-        fi
-        log "WAN workflow setup failed. Retrying..." "$YELLOW" "WARNING"
-        sleep 10
-    done
-    
-    # Make the run script executable
-    run_command "chmod +x \"${WORKSPACE}/run_wan_i2v.sh\"" "Failed to make run script executable"
-    
-    # Verify key WAN components
-    if [ ! -f "${COMFYUI_DIR}/models/checkpoints/wan2.1-i2v-14b-480p-Q4_K_S.gguf" ]; then
-        log "Warning: WAN 2.1 model file not found. Image to Video may not work properly." "$YELLOW" "WARNING"
-    fi
-    
-    if [ ! -f "${COMFYUI_DIR}/workflows/wan_i2v_workflow.json" ]; then
-        log "Warning: WAN 2.1 workflow file not found. Creating empty directory..." "$YELLOW" "WARNING"
-        run_command "mkdir -p \"${COMFYUI_DIR}/workflows\"" "Failed to create workflows directory"
-    fi
-    
-    log "WAN 2.1 Image to Video setup complete!" "$GREEN"
-}
-
-download_base_models() {
-    log "Downloading base models..." "$YELLOW"
-    
-    # Run the model download script with retry logic
-    for _ in {1..3}; do
-        if run_command "${WORKSPACE}/download_models.sh" "Base model download failed" 1800; then
-            break
-        fi
-        log "Base model download failed. Retrying..." "$YELLOW" "WARNING"
-        sleep 10
-    done
-}
-
-create_persistent_service() {
-    log "Creating persistent startup service..." "$YELLOW"
-
-    cat > "${WORKSPACE}/comfyui_persistent_start.sh" << 'EOL'
-#!/bin/bash
-# Persistent ComfyUI Startup Script
-
-log() {
-    echo "[$(date "+%Y-%m-%d %H:%M:%S")] $1" >> /workspace/comfyui_persistent.log
-}
-
-start_comfyui() {
-    cd /workspace/ComfyUI
-    pkill -f "python.*main.py" || true
-    nohup python3 main.py --listen 0.0.0.0 --port 8188 --enable-cors-header --force-fp16 >> /workspace/comfyui_output.log 2>&1 &
-    sleep 10
-    if pgrep -f "python.*main.py" > /dev/null; then
-        log "ComfyUI started successfully"
-    else
-        log "Failed to start ComfyUI"
-    fi
-}
-
-while true; do
-    start_comfyui
-    sleep 60
-    
-    # Check if ComfyUI is still running
-    if ! pgrep -f "python.*main.py" > /dev/null; then
-        log "ComfyUI crashed or stopped. Restarting..."
-        start_comfyui
-    fi
-done
-EOL
-
-    run_command "chmod +x \"${WORKSPACE}/comfyui_persistent_start.sh\"" "Failed to make persistent start script executable"
-
-    cat > /etc/systemd/system/comfyui.service << 'EOL'
-[Unit]
-Description=Persistent ComfyUI Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/workspace
-ExecStart=/workspace/comfyui_persistent_start.sh
-Restart=always
-RestartSec=30
-
-[Install]
-WantedBy=multi-user.target
-EOL
-
-    log "Enabling and starting ComfyUI service..." "$GREEN"
-    run_command "systemctl daemon-reload" "Failed to reload systemd"
-    run_command "systemctl enable comfyui.service" "Failed to enable ComfyUI service"
-    run_command "systemctl start comfyui.service" "Failed to start ComfyUI service"
-}
-
-generate_diagnostic_report() {
-    log "Generating Comprehensive Diagnostic Report..." "$YELLOW"
-
-    {
-        echo "=== SYSTEM DIAGNOSTIC REPORT ==="
-        echo "Timestamp: $(date)"
-        echo ""
-        echo "=== SYSTEM DETAILS ==="
-        hostnamectl
-        echo ""
-        echo "=== CPU INFO ==="
-        lscpu | grep "Model name\|Socket(s)\|Core(s) per socket\|Thread(s) per core"
-        echo ""
-        echo "=== MEMORY INFO ==="
-        free -h
-        echo ""
-        echo "=== DISK SPACE ==="
-        df -h
-        echo ""
-        echo "=== GPU INFORMATION ==="
-        if command -v nvidia-smi &> /dev/null; then
-            nvidia-smi
-        else
-            echo "No NVIDIA GPU detected"
-        fi
-        echo ""
-        echo "=== PYTHON ENVIRONMENT ==="
-        python3 --version
-        python3 -m pip list
-        echo ""
-        echo "=== NETWORK CONNECTIVITY ==="
-        curl -s ifconfig.me || echo "Failed to get public IP"
-        echo ""
-        echo "=== COMFYUI DIRECTORY ==="
-        ls -la "$COMFYUI_DIR"
-        echo ""
-        echo "=== CUSTOM NODES ==="
-        ls -la "$COMFYUI_DIR/custom_nodes"
-        echo ""
-        echo "=== MODEL FILES ==="
-        find "$COMFYUI_DIR/models" -type f -name "*.safetensors" -o -name "*.ckpt" -o -name "*.pth" -o -name "*.gguf" | sort
-        echo ""
-        echo "=== WAN 2.1 IMAGE TO VIDEO STATUS ==="
-        if [ -f "$COMFYUI_DIR/models/checkpoints/wan2.1-i2v-14b-480p-Q4_K_S.gguf" ]; then
-            echo "✅ WAN I2V Model: Installed"
-            echo "   Size: $(du -h "$COMFYUI_DIR/models/checkpoints/wan2.1-i2v-14b-480p-Q4_K_S.gguf" | cut -f1)"
-        else
-            echo "❌ WAN I2V Model: Missing"
-        fi
-        
-        if [ -f "$COMFYUI_DIR/workflows/wan_i2v_workflow.json" ]; then
-            echo "✅ WAN I2V Workflow: Installed"
-        else
-            echo "❌ WAN I2V Workflow: Missing"
-        fi
-        
-        if [ -f "$WORKSPACE/run_wan_i2v.sh" ]; then
-            echo "✅ WAN I2V Run Script: Installed"
-        else
-            echo "❌ WAN I2V Run Script: Missing"
-        fi
-        
-        echo ""
-        echo "=== SERVICE STATUS ==="
-        systemctl status comfyui.service
-        echo ""
-        echo "=== LOG FILES ==="
-        ls -la /workspace/*.log
-        echo ""
-        echo "=== END OF REPORT ==="
-    } >> "${DIAGNOSTIC_LOG}"
-    
-    log "Diagnostic report saved to: $DIAGNOSTIC_LOG" "$GREEN"
-}
-
-create_quickstart_guide() {
-    log "Creating quickstart guide..." "$YELLOW"
-    
-    cat > "${WORKSPACE}/QUICKSTART.md" << 'EOL'
-# ComfyUI Quickstart Guide
-
-## Accessing ComfyUI
-- Open your browser and navigate to: http://YOUR_VAST_AI_IP:8188
-
-## Using WAN 2.1 Image to Video
-1. Connect to your Vast.ai instance via SSH
-2. Run the WAN 2.1 Image to Video specific script:
-3. Open your browser and access the interface
-4. The workflow should be loaded automatically
-5. Upload your reference image
-6. Adjust the prompt to describe the desired motion
-7. Click "Queue Prompt" to generate your video
-
-## Tips for RTX 3090
-- You can increase resolution to 768x1280
-- Try 60-100+ frames for longer videos
-- Experiment with different samplers (dpm++ 2m karras often works well)
-- Adjust CFG scale between 5-7 for best results
-
-## Troubleshooting
-- Check logs: `/workspace/comfyui_output.log`
-- Diagnostic report: `/workspace/comfyui_universal_setup.log`
-- Restart ComfyUI: `systemctl restart comfyui.service`
-
-## Important Directories
-- Models: `/workspace/ComfyUI/models/`
-- Custom nodes: `/workspace/ComfyUI/custom_nodes/`
-- Workflows: `/workspace/ComfyUI/workflows/`
-- Outputs: `/workspace/ComfyUI/output/`
-EOL
-
- log "Quickstart guide created at: ${WORKSPACE}/QUICKSTART.md" "$GREEN"
-}
-
-# Main function with enhanced error handling and progress tracking
+# Main setup function
 main() {
-    log "Starting Universal ComfyUI Setup..." "$BLUE"
+    log "Starting ComfyUI setup..." "$GREEN"
     
-    # Track progress
-    local total_steps=5
-    local current_step=0
+    # Prepare system
+    prepare_system || error_exit "System preparation failed"
     
-    # Step 1: System preparation
-    ((current_step++))
-    log "[$current_step/$total_steps] Preparing system environment..." "$BLUE"
-    prepare_system
+    # Check system compatibility
+    check_system_compatibility || error_exit "System compatibility check failed"
     
-    # Step 2: System compatibility check
-    ((current_step++))
-    log "[$current_step/$total_steps] Checking system compatibility..." "$BLUE"
-    check_system_compatibility
+    # Clone ComfyUI repository
+    log "Cloning ComfyUI repository..." "$GREEN"
+    run_command "git clone https://github.com/comfyanonymous/ComfyUI.git \"$COMFYUI_DIR\"" "Failed to clone ComfyUI repository" || \
+        error_exit "ComfyUI repository clone failed"
     
-    # Step 3: Download setup scripts
-    ((current_step++))
-    log "[$current_step/$total_steps] Downloading setup scripts..." "$BLUE"
-    download_setup_scripts
+    # Install ComfyUI dependencies
+    log "Installing ComfyUI dependencies..." "$GREEN"
+    cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
+    run_command "pip install -r requirements.txt" "Failed to install ComfyUI dependencies" || \
+        error_exit "ComfyUI dependencies installation failed"
     
-    # Step 4: Install ComfyUI
-    ((current_step++))
-    log "[$current_step/$total_steps] Installing ComfyUI..." "$BLUE"
-    install_comfyui
+    # Download models
+    log "Downloading WAN 2.1 models..." "$GREEN"
+    cd "$WORKSPACE/vast-scripts" || error_exit "Failed to change to vast-scripts directory"
+    ./download_models.sh || error_exit "Model download failed"
     
-    # Step 5: Final verification
-    ((current_step++))
-    log "[$current_step/$total_steps] Performing final verification..." "$BLUE"
+    # Setup workflow
+    log "Setting up WAN 2.1 workflow..." "$GREEN"
+    ./setup_wan_i2v_workflow.sh || error_exit "Workflow setup failed"
     
-    # Verify all components
-    local verification_errors=0
+    # Start ComfyUI server
+    log "Starting ComfyUI server..." "$GREEN"
+    ./start_comfyui.sh || error_exit "Server startup failed"
     
-    # Check ComfyUI
-    if [ ! -f "${COMFYUI_DIR}/main.py" ]; then
-        log "Error: ComfyUI installation verification failed" "$RED" "ERROR"
-        ((verification_errors++))
-    fi
-    
-    # Check models directory
-    if [ ! -d "${COMFYUI_DIR}/models" ]; then
-        log "Error: Models directory verification failed" "$RED" "ERROR"
-        ((verification_errors++))
-    fi
-    
-    # Check Python environment
-    if ! python3 -c "import torch" 2>/dev/null; then
-        log "Error: Python environment verification failed" "$RED" "ERROR"
-        ((verification_errors++))
-    fi
-    
-    # Final status
-    if [ $verification_errors -eq 0 ]; then
-        log "Universal ComfyUI Setup completed successfully!" "$GREEN"
-        log "You can now proceed with model downloads and workflow setup" "$GREEN"
-        
-        # Generate success report
-        {
-            echo "=== Setup Success Report ==="
-            echo "Timestamp: $(date)"
-            echo "Status: SUCCESS"
-            echo ""
-            echo "=== Installation Summary ==="
-            echo "ComfyUI Location: $COMFYUI_DIR"
-            echo "Log File: $DIAGNOSTIC_LOG"
-            echo ""
-            echo "=== Next Steps ==="
-            echo "1. Download models using: ${WORKSPACE}/download_wan_i2v_models.sh"
-            echo "2. Setup workflow using: ${WORKSPACE}/setup_wan_i2v_workflow.sh"
-            echo "3. Start ComfyUI using: ${WORKSPACE}/run_wan_i2v.sh"
-        } >> "$DIAGNOSTIC_LOG"
-    else
-        error_exit "Setup completed with $verification_errors verification errors"
-    fi
+    log "ComfyUI setup completed successfully!" "$GREEN"
+    log "Access URL: http://$(hostname -I | awk '{print $1}'):8188" "$GREEN"
 }
 
-# Run main function with error handling
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    trap 'error_exit "Script interrupted" 130' INT
-    trap 'error_exit "Script terminated" 143' TERM
-    
-    main "$@"
-fi
+# Run main function
+main "$@"
