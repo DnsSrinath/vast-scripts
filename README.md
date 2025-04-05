@@ -146,3 +146,94 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - ComfyUI team for the amazing framework
 - WAN 2.1 team for the Image to Video models
 - Vast.ai for providing the infrastructure
+
+## On-start Script
+
+```bash
+#!/bin/bash
+
+# On-start Script for Vast.ai ComfyUI Instance
+# This script runs automatically when your instance starts
+
+# Set strict error handling
+set -euo pipefail
+
+# Define workspace and log paths
+WORKSPACE="/workspace"
+LOG_FILE="$WORKSPACE/startup.log"
+DIAGNOSTIC_LOG="$WORKSPACE/startup_diagnostics.log"
+
+# Initialize logs
+echo "=== ComfyUI Startup Log ===" > "$LOG_FILE"
+echo "Started at: $(date)" >> "$LOG_FILE"
+echo "=== System Information ===" >> "$DIAGNOSTIC_LOG"
+nvidia-smi >> "$DIAGNOSTIC_LOG" 2>&1
+free -h >> "$DIAGNOSTIC_LOG" 2>&1
+df -h >> "$DIAGNOSTIC_LOG" 2>&1
+
+# Function to log messages
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# Function to handle errors
+error_exit() {
+    log "ERROR: $1"
+    echo "=== Error Diagnostics ===" >> "$DIAGNOSTIC_LOG"
+    nvidia-smi >> "$DIAGNOSTIC_LOG" 2>&1
+    ps aux >> "$DIAGNOSTIC_LOG" 2>&1
+    exit 1
+}
+
+# 1. Setup Workspace
+log "Setting up workspace..."
+cd "$WORKSPACE" || error_exit "Failed to change to workspace directory"
+
+# 2. Clone Repository (if not exists)
+if [ ! -d "vast-scripts" ]; then
+    log "Cloning repository..."
+    git clone https://github.com/DnsSrinath/vast-scripts.git || error_exit "Failed to clone repository"
+fi
+
+# 3. Setup Scripts
+cd vast-scripts || error_exit "Failed to change to vast-scripts directory"
+chmod +x *.sh || error_exit "Failed to make scripts executable"
+
+# 4. Run Universal Setup
+log "Starting universal setup..."
+if ./universal_comfyui_setup.sh; then
+    log "Universal setup completed successfully"
+else
+    log "Universal setup failed, attempting individual components..."
+    
+    # 4a. Core Installation
+    log "Running ComfyUI installation..."
+    ./setup_comfyui.sh || error_exit "ComfyUI installation failed"
+    
+    # 4b. Model Download
+    log "Downloading models..."
+    ./download_models.sh || error_exit "Model download failed"
+    
+    # 4c. Workflow Setup
+    log "Setting up workflow..."
+    ./setup_wan_i2v_workflow.sh || error_exit "Workflow setup failed"
+    
+    # 4d. Start Server
+    log "Starting ComfyUI server..."
+    ./start_comfyui.sh || error_exit "Server startup failed"
+fi
+
+# 5. Final Checks
+log "Performing final checks..."
+if pgrep -f "python.*main.py" > /dev/null; then
+    log "ComfyUI server is running"
+    log "Access URL: http://$(hostname -I | awk '{print $1}'):8188"
+else
+    error_exit "ComfyUI server failed to start"
+fi
+
+# 6. Cleanup
+log "Cleaning up temporary files..."
+rm -rf "$WORKSPACE/temp_downloads" 2>/dev/null || true
+
+log "Startup process completed"
