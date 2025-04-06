@@ -70,6 +70,19 @@ These plugins provide additional nodes specifically designed for SDXL 2.1 workfl
 ## WAN 2.1 Image-to-Video Workflow
 To run WAN 2.1 image-to-video workflows, you'll need to install the following plugin and models:
 
+### WAN 2.1 Model Options
+WAN 2.1 is a series of 4 video generation models:
+- **Text-to-video 14B**: Supports both 480P and 720P
+- **Image-to-video 14B 720P**: Supports 720P
+- **Image-to-video 14B 480P**: Supports 480P
+- **Text-to-video 1.3B**: Supports 480P (requires only 8.19 GB VRAM, compatible with consumer-grade GPUs)
+
+### Key Features
+- **Supports Consumer-grade GPUs**: The T2V-1.3B model requires only 8.19 GB VRAM, making it compatible with almost all consumer-grade GPUs. It can generate a 5-second 480P video on an RTX 4090 in about 4 minutes (without quantization).
+- **Multiple Tasks**: WAN 2.1 excels in Text-to-Video, Image-to-Video, Video Editing, Text-to-Image, and Video-to-Audio.
+- **Visual Text Generation**: WAN 2.1 is the first video model capable of generating both Chinese and English text.
+- **Powerful Video VAE**: WAN-VAE delivers exceptional efficiency and performance, encoding and decoding 1080P videos of any length while preserving temporal information.
+
 ### Method 1: Using ComfyUI Manager (Recommended)
 If you already have ComfyUI Manager installed, you can use it to install the WAN plugin:
 
@@ -112,21 +125,39 @@ pip install -r requirements.txt
 cd ..
 ```
 
-#### Option C: Direct Download
+#### Option C: Direct Download (Updated)
 ```bash
 # Change to the custom nodes directory
 cd /opt/workspace-internal/ComfyUI/custom_nodes
 
-# Download and extract the plugin
-wget https://github.com/Kosinkadink/ComfyUI-WAN/archive/refs/heads/main.zip
-unzip main.zip
-mv ComfyUI-WAN-main ComfyUI-WAN
-rm main.zip
+# Download and extract the plugin (using the correct URL)
+wget https://github.com/Kosinkadink/ComfyUI-WAN/archive/refs/heads/master.zip
+unzip master.zip
+mv ComfyUI-WAN-master ComfyUI-WAN
+rm master.zip
 
 # Install requirements
 cd ComfyUI-WAN
 pip install -r requirements.txt
 cd ..
+```
+
+#### Option D: Using ComfyUI Manager from Command Line
+```bash
+# Change to the ComfyUI directory
+cd /opt/workspace-internal/ComfyUI
+
+# Install ComfyUI Manager if not already installed
+cd custom_nodes
+if [ ! -d "ComfyUI-Manager" ]; then
+    git clone https://github.com/ltdrdata/ComfyUI-Manager.git
+    cd ComfyUI-Manager
+    pip install -r requirements.txt
+    cd ..
+fi
+
+# Use ComfyUI Manager to install WAN
+python3 -c "from comfyui_manager import ComfyUIManager; manager = ComfyUIManager(); manager.install_extension('https://github.com/Kosinkadink/ComfyUI-WAN.git')"
 ```
 
 ### Downloading Required Models
@@ -143,13 +174,19 @@ mkdir -p /opt/workspace-internal/ComfyUI/models/diffusion_models
 wget -O /opt/workspace-internal/ComfyUI/models/vae/wan_2.1_vae.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan_2.1_vae.safetensors
 wget -O /opt/workspace-internal/ComfyUI/models/clip_vision/clip_vision_h.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/clip_vision_h.safetensors
 wget -O /opt/workspace-internal/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+
+# Download one of the diffusion models based on your needs:
+# For Text-to-video 1.3B (480P) - Requires only 8.19 GB VRAM
 wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_t2v_1.3B_fp16.safetensors
 
-# Alternative URLs (if the primary URLs don't work)
-# wget -O /opt/workspace-internal/ComfyUI/models/vae/wan_2.1_vae.safetensors https://civitai.com/api/download/models/123456
-# wget -O /opt/workspace-internal/ComfyUI/models/clip_vision/clip_vision_h.safetensors https://civitai.com/api/download/models/123456
-# wget -O /opt/workspace-internal/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors https://civitai.com/api/download/models/123456
-# wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors https://civitai.com/api/download/models/123456
+# For Image-to-video 14B 480P
+# wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_i2v_14B_480P_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_i2v_14B_480P_fp16.safetensors
+
+# For Image-to-video 14B 720P
+# wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_i2v_14B_720P_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_i2v_14B_720P_fp16.safetensors
+
+# For Text-to-video 14B
+# wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_14B_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_t2v_14B_fp16.safetensors
 ```
 
 ### Restart ComfyUI
@@ -162,18 +199,13 @@ cd /workspace
 ./vast-scripts/vast-scripts/vast_startup.sh
 ```
 
-**WAN 2.1 Features:**
-- High-quality image-to-video generation
-- Text-to-video capabilities
-- Advanced motion control
-- Improved temporal consistency
-- Support for various video formats
-
 **Workflow Tips:**
 - Use the WAN 2.1 Image to Video node for basic image-to-video conversion
 - Adjust the motion strength parameter to control the amount of movement
 - Use the WAN 2.1 Text to Video node for generating videos from text prompts
 - Combine with ControlNet for more precise control over the generated videos
+- For best performance with the 1.3B model, use 480P resolution
+- The 14B models provide higher quality but require more VRAM
 
 ## Lip-Sync Workflow Requirements
 To run lip-sync workflows using Latent Sync, you'll need to install the following plugin:
@@ -266,64 +298,3 @@ If you encounter GitHub authentication prompts when installing plugins, you can:
    git config --global credential.helper store
    echo "https://YOUR_USERNAME:YOUR_TOKEN@github.com" > ~/.git-credentials
    ```
-
-2. **Skip problematic plugins**:
-   ```bash
-   # Edit the vast_startup.sh script to remove problematic plugins
-   sed -i '/comfyui-reactor-node/d' vast_startup.sh
-   ```
-
-3. **Use SSH instead of HTTPS**:
-   ```bash
-   # Configure git to use SSH
-   git config --global url."git@github.com:".insteadOf "https://github.com/"
-   ```
-
-## Logging and Monitoring
-To check the ComfyUI logs, use the following commands:
-
-```bash
-# View ComfyUI application logs
-cat /workspace/logs/comfyui.log
-
-# View startup script logs
-cat /workspace/logs/startup.log
-
-# Follow logs in real-time
-tail -f /workspace/logs/comfyui.log
-
-# See the last 50 lines of logs
-tail -n 50 /workspace/logs/comfyui.log
-
-# Search for specific errors
-grep -i "error" /workspace/logs/comfyui.log
-
-# Check if ComfyUI is running
-ps aux | grep "python3.*main.py.*--port 8188"
-
-# Check the PID file
-cat /workspace/comfyui.pid
-```
-
-## Troubleshooting
-- Check the log files at `/workspace/logs/comfyui.log` and `/workspace/logs/startup.log` for any startup issues
-- If ComfyUI fails to start, the script will automatically attempt to restart it
-- All installed plugins are stored in `/opt/workspace-internal/ComfyUI/custom_nodes`
-
-### Common Issues
-- **ComfyUI not starting after instance restart**: 
-  - Check if the startup script is properly set in the "On-start Script" field
-  - Verify that the script has execute permissions
-  - Check the log files for any error messages
-  - Try manually running the script from GitHub
-  - Use the manual startup commands if automatic startup fails
-
-- **Port already in use**:
-  - The script will automatically kill any existing ComfyUI processes before starting
-  - If you're still having issues, you can manually kill the process: `pkill -f "python3.*main.py.*--port 8188"`
-
-- **Plugin installation failures**:
-  - Check if you have sufficient disk space
-  - Verify that git is working properly
-  - Try manually installing the plugins
-  - If GitHub authentication is required, use one of the methods in the "Handling GitHub Authentication Issues" section 
