@@ -419,6 +419,28 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download, login
 from tqdm import tqdm
 
+# Immediate startup feedback
+print("\n" + "="*80)
+print("STARTING MODEL DOWNLOAD SCRIPT")
+print("="*80)
+print("Initializing...")
+sys.stdout.flush()
+
+# Debug information
+print("\nDebug Information:")
+print(f"Python version: {sys.version}")
+print(f"Current directory: {os.getcwd()}")
+print(f"Available packages:")
+try:
+    import pkg_resources
+    installed_packages = [f"{dist.key} {dist.version}" for dist in pkg_resources.working_set]
+    for package in installed_packages:
+        print(f"  - {package}")
+except Exception as e:
+    print(f"Error getting package info: {e}")
+print("="*80 + "\n")
+sys.stdout.flush()
+
 # Set up logging with immediate flush
 logging.basicConfig(
     level=logging.INFO,
@@ -430,11 +452,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Print initial status
-print("\n" + "="*80)
-print("STARTING MODEL DOWNLOAD SCRIPT")
-print("="*80)
-print("Initializing...")
+print("Logging system initialized")
 sys.stdout.flush()
 
 def print_file_info(file_name, file_size_mb):
@@ -712,8 +730,8 @@ EOF
     log "Downloading WAN 2.1 models (several GB in size)..." "$YELLOW" "WARNING"
     log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
     
-    # Run the Python script with output redirection to see progress immediately
-    python3 download_models.py 2>&1 | tee model_download_progress.log || {
+    # Run the Python script with output redirection and debug mode
+    PYTHONUNBUFFERED=1 python3 -u download_models.py 2>&1 | tee model_download_progress.log || {
         log "Model download failed. Check model_download_progress.log for details" "$RED" "ERROR"
         error_exit "Model download failed"
     }
