@@ -353,13 +353,27 @@ check_system_compatibility() {
             run_command "apt-get update" "Failed to update package lists" || \
                 log "Package list update failed" "$YELLOW" "WARNING"
             
-            # Try to load NVIDIA kernel module first
-            run_command "modprobe nvidia" "Failed to load NVIDIA kernel module" || \
-                log "Failed to load NVIDIA kernel module" "$YELLOW" "WARNING"
+            # Install NVIDIA kernel module first
+            log "Installing NVIDIA kernel module..." "$YELLOW"
+            run_command "apt-get install -y nvidia-kernel-common nvidia-kernel-source" "Failed to install NVIDIA kernel packages" || \
+                log "NVIDIA kernel package installation failed" "$YELLOW" "WARNING"
             
-            # Try to install NVIDIA driver without reinstall
-            run_command "apt-get install -y nvidia-driver-535" "Failed to install NVIDIA drivers" || \
-                log "NVIDIA driver installation failed" "$YELLOW" "WARNING"
+            # Try to build and install the module
+            if [ -d "/usr/src/nvidia" ]; then
+                log "Building NVIDIA kernel module..." "$YELLOW"
+                run_command "cd /usr/src/nvidia && make -j$(nproc) && make install" "Failed to build NVIDIA kernel module" || \
+                    log "NVIDIA kernel module build failed" "$YELLOW" "WARNING"
+            fi
+            
+            # Try to load the module
+            if [ -f "/lib/modules/$(uname -r)/kernel/drivers/nvidia/nvidia.ko" ]; then
+                run_command "modprobe nvidia" "Failed to load NVIDIA kernel module" || \
+                    log "Failed to load NVIDIA kernel module" "$YELLOW" "WARNING"
+            else
+                log "NVIDIA kernel module not found, trying alternative installation..." "$YELLOW" "WARNING"
+                run_command "apt-get install -y nvidia-driver-535" "Failed to install NVIDIA drivers" || \
+                    log "NVIDIA driver installation failed" "$YELLOW" "WARNING"
+            fi
             
             # Try to restart NVIDIA services
             run_command "systemctl restart nvidia-persistenced" "Failed to restart NVIDIA services" || \
@@ -598,15 +612,19 @@ main() {
     log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
     log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$GREEN"
     
-    # Function to format size without bc
+    # Function to format size using simple integer division
     format_size() {
         local size=$1
-        if [ $size -ge 1073741824 ]; then
-            printf "%.2f GB" "$(awk "BEGIN {printf \"%.2f\", $size/1073741824}")"
-        elif [ $size -ge 1048576 ]; then
-            printf "%.2f MB" "$(awk "BEGIN {printf \"%.2f\", $size/1048576}")"
+        local gb=$((size / 1073741824))
+        local mb=$((size / 1048576))
+        local kb=$((size / 1024))
+        
+        if [ $gb -gt 0 ]; then
+            printf "%d GB" $gb
+        elif [ $mb -gt 0 ]; then
+            printf "%d MB" $mb
         else
-            printf "%.2f KB" "$(awk "BEGIN {printf \"%.2f\", $size/1024}")"
+            printf "%d KB" $kb
         fi
     }
     
@@ -633,7 +651,7 @@ main() {
         
         # Check if model already exists with correct size
         local size=$(curl -sI "$url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
-        if [ ! -z "$size" ]; then
+        if [ -n "$size" ]; then
             if check_model_exists "$output" "$size"; then
                 log "✅ Model ${filename} already exists with correct size ($(format_size $size))" "$GREEN"
                 return 0
@@ -646,7 +664,7 @@ main() {
         mkdir -p "$dir"
         
         # Get file size first
-        if [ ! -z "$size" ]; then
+        if [ -n "$size" ]; then
             log "File size: $(format_size $size)" "$YELLOW"
         fi
         
