@@ -2080,3 +2080,6 @@ EOF
         exit 1
     fi
 }
+
+# Call the main function to start the installation process
+main
