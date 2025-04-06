@@ -861,6 +861,147 @@ display_summary() {
     log "=============================================" "$BLUE"
 }
 
+# Function to initialize metadata system
+initialize_metadata() {
+    local metadata_dir="/workspace/ComfyUI/models/.metadata"
+    local metadata_index="$metadata_dir/index.txt"
+    
+    # Create metadata directory if it doesn't exist
+    mkdir -p "$metadata_dir"
+    
+    # Create index file if it doesn't exist
+    if [ ! -f "$metadata_index" ]; then
+        echo "# ComfyUI Model Metadata Index" > "$metadata_index"
+        echo "# Created: $(date '+%Y-%m-%d %H:%M:%S')" >> "$metadata_index"
+        echo "# Format: model_name:expected_size:last_verified" >> "$metadata_index"
+        echo "----------------------------------------" >> "$metadata_index"
+    fi
+    
+    # Create empty metadata files for each expected model if they don't exist
+    for model_info in "${MODELS[@]}"; do
+        IFS=':' read -r path size url <<< "$model_info"
+        local model_name=$(basename "$path")
+        local metadata_file="$metadata_dir/${model_name}.meta"
+        
+        if [ ! -f "$metadata_file" ]; then
+            echo "path=/workspace/ComfyUI/models/$path" > "$metadata_file"
+            echo "size=$size" >> "$metadata_file"
+            echo "timestamp=0" >> "$metadata_file"
+            echo "checksum=" >> "$metadata_file"
+            echo "status=not_downloaded" >> "$metadata_file"
+            
+            # Add to index
+            echo "$model_name:$size:0" >> "$metadata_dir/index.txt"
+        fi
+    done
+}
+
+# Function to manage model metadata
+manage_metadata() {
+    local action="$1"
+    local model_path="$2"
+    local expected_size="$3"
+    local metadata_dir="/workspace/ComfyUI/models/.metadata"
+    local metadata_file="$metadata_dir/$(basename "$model_path").meta"
+    
+    # Initialize metadata system if this is the first run
+    if [ ! -d "$metadata_dir" ]; then
+        initialize_metadata
+    fi
+    
+    case "$action" in
+        "check")
+            if [ -f "$metadata_file" ]; then
+                local stored_size=$(grep "^size=" "$metadata_file" | cut -d'=' -f2)
+                local stored_path=$(grep "^path=" "$metadata_file" | cut -d'=' -f2)
+                local stored_status=$(grep "^status=" "$metadata_file" | cut -d'=' -f2)
+                
+                if [ "$stored_size" = "$expected_size" ] && [ -f "$stored_path" ] && [ "$stored_status" = "verified" ]; then
+                    return 0  # File exists and matches metadata
+                fi
+            fi
+            return 1  # File needs to be downloaded
+            ;;
+        "update")
+            echo "path=$model_path" > "$metadata_file"
+            echo "size=$expected_size" >> "$metadata_file"
+            echo "timestamp=$(date +%s)" >> "$metadata_file"
+            echo "checksum=$(md5sum "$model_path" | cut -d' ' -f1)" >> "$metadata_file"
+            echo "status=verified" >> "$metadata_file"
+            
+            # Update index
+            local model_name=$(basename "$model_path")
+            sed -i "s|^$model_name:.*|$model_name:$expected_size:$(date +%s)|" "$metadata_dir/index.txt"
+            ;;
+        "verify")
+            if [ -f "$metadata_file" ]; then
+                local stored_checksum=$(grep "^checksum=" "$metadata_file" | cut -d'=' -f2)
+                local current_checksum=$(md5sum "$model_path" | cut -d' ' -f1)
+                if [ "$stored_checksum" = "$current_checksum" ]; then
+                    return 0  # File is valid
+                fi
+            fi
+            return 1  # File is invalid or metadata missing
+            ;;
+        "status")
+            if [ -f "$metadata_file" ]; then
+                local stored_status=$(grep "^status=" "$metadata_file" | cut -d'=' -f2)
+                echo "$stored_status"
+            else
+                echo "not_downloaded"
+            fi
+            ;;
+    esac
+}
+
+# Function to download a model with metadata tracking
+download_model() {
+    local url="$1"
+    local output_path="$2"
+    local expected_size="$3"
+    local model_name=$(basename "$output_path")
+    
+    # Create directory if it doesn't exist
+    mkdir -p "$(dirname "$output_path")"
+    
+    # Check if file exists and is valid according to metadata
+    if manage_metadata "check" "$output_path" "$expected_size"; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ $model_name exists and is valid, skipping download"
+        return 0
+    fi
+    
+    # If file exists but metadata doesn't match, verify it
+    if [ -f "$output_path" ]; then
+        local actual_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null)
+        if [ "$actual_size" = "$expected_size" ]; then
+            # File size matches, update metadata
+            manage_metadata "update" "$output_path" "$expected_size"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ $model_name exists with correct size, updating metadata"
+            return 0
+        else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ $model_name exists but size mismatch, re-downloading"
+            rm -f "$output_path"
+        fi
+    fi
+    
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Downloading $model_name..."
+    if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$output_path"; then
+        local downloaded_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null)
+        if [ "$downloaded_size" = "$expected_size" ]; then
+            manage_metadata "update" "$output_path" "$expected_size"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Successfully downloaded $model_name"
+            return 0
+        else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Downloaded file size mismatch for $model_name"
+            rm -f "$output_path"
+            return 1
+        fi
+    else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Failed to download $model_name"
+        return 1
+    fi
+}
+
 # Main setup function
 main() {
     log "Starting ComfyUI setup..." "$GREEN"
@@ -917,7 +1058,7 @@ main() {
     mkdir -p "$COMFYUI_DIR/models/"{diffusion_models,text_encoders,clip_vision,vae} || \
         error_exit "Failed to create model directories"
     
-    # Download WAN 2.1 models
+    # Download WAN 2.1 models with metadata tracking
     log "Downloading WAN 2.1 models..." "$GREEN"
     log "This may take a while. The models are large files..." "$YELLOW" "WARNING"
     log "Downloading WAN 2.1 models (several GB in size)..." "$YELLOW" "WARNING"
@@ -940,228 +1081,44 @@ main() {
         fi
     }
     
-    # Function to check if model exists and is valid
-    check_model_exists() {
-        local model_path="$1"
-        local expected_size="$2"
+    # Download WAN 2.1 models with metadata tracking
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Initializing metadata system..."
+    initialize_metadata
+
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking WAN 2.1 models..."
+    MODELS=(
+        "clip_vision/clip_vision_h.safetensors:1264219396:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
+        "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors:6735906897:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+        "diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors:16401356938:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
+        "vae/wan_2.1_vae.safetensors:33554432:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+    )
+
+    # First verify all existing files
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Verifying existing model files..."
+    for model_info in "${MODELS[@]}"; do
+        IFS=':' read -r path size url <<< "$model_info"
+        output_path="/workspace/ComfyUI/models/$path"
+        model_name=$(basename "$path")
         
-        if [ -f "$model_path" ]; then
-            local actual_size=$(stat -f %z "$model_path" 2>/dev/null || stat -c %s "$model_path" 2>/dev/null)
-            if [ -n "$actual_size" ] && [ -n "$expected_size" ] && [ "$actual_size" = "$expected_size" ]; then
-                return 0
+        # Get current status
+        current_status=$(manage_metadata "status" "$output_path" "$size")
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Status for $model_name: $current_status"
+        
+        if [ -f "$output_path" ]; then
+            if ! manage_metadata "verify" "$output_path"; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ $model_name exists but is invalid, will re-download"
+                rm -f "$output_path"
             fi
         fi
-        return 1
-    }
-    
-    # Function to download a model
-    download_model() {
-        local url="$1"
-        local target_dir="$2"
-        local filename="$3"
-        local max_retries=3
-        local retry_count=0
-        
-        # Create target directory if it doesn't exist
-        mkdir -p "$target_dir"
-        
-        # Check if file already exists with correct size
-        if [ -f "$target_dir/$filename" ]; then
-            local existing_size=$(stat -c%s "$target_dir/$filename" 2>/dev/null || echo 0)
-            if [ "$existing_size" -gt 0 ]; then
-                log "File $filename already exists with size $(format_size $existing_size)" "$GREEN"
-                return 0
-            fi
-        fi
-        
-        while [ $retry_count -lt $max_retries ]; do
-            log "Downloading $filename..." "$BLUE"
-            
-            # Try wget first
-            if command -v wget &> /dev/null; then
-                wget --progress=bar:force:noscroll \
-                     --no-check-certificate \
-                     --retry-connrefused \
-                     --retry-on-http-error=503 \
-                     --tries=5 \
-                     --continue \
-                     --timeout=60 \
-                     --waitretry=30 \
-                     -O "$target_dir/$filename" "$url" 2>&1
-            else
-                # Fall back to curl
-                curl -L \
-                     --retry 5 \
-                     --retry-delay 30 \
-                     --retry-max-time 3600 \
-                     --continue-at - \
-                     -o "$target_dir/$filename" "$url" 2>&1
-            fi
-            
-            # Check if download was successful
-            if [ $? -eq 0 ] && [ -f "$target_dir/$filename" ]; then
-                local downloaded_size=$(stat -c%s "$target_dir/$filename" 2>/dev/null || echo 0)
-                if [ "$downloaded_size" -gt 0 ]; then
-                    log "✅ Successfully downloaded $filename ($(format_size $downloaded_size))" "$GREEN"
-                    return 0
-                else
-                    log "Downloaded file is empty, retrying..." "$YELLOW" "WARNING"
-                fi
-            fi
-            
-            retry_count=$((retry_count + 1))
-            if [ $retry_count -lt $max_retries ]; then
-                log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
-                sleep 5
-            fi
-        done
-        
-        log "❌ Failed to download $filename after $max_retries attempts" "$RED" "ERROR"
-        return 1
-    }
-    
-    # Function to download WAN 2.1 models
-    download_wan_models() {
-        log "Checking WAN 2.1 models..." "$BLUE"
-        
-        # Create model directories
-        mkdir -p "$COMFYUI_DIR/models/clip_vision"
-        mkdir -p "$COMFYUI_DIR/models/text_encoders"
-        mkdir -p "$COMFYUI_DIR/models/diffusion_models"
-        mkdir -p "$COMFYUI_DIR/models/vae"
-        
-        # Define models with their paths and URLs
-        declare -A models=(
-            ["clip_vision/clip_vision_h.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
-            ["text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-            ["diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
-            ["vae/wan_2.1_vae.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
-        )
-        
-        log "Total files to check: ${#models[@]}" "$BLUE"
-        
-        # First, check all files and determine which ones need to be downloaded
-        local files_to_download=()
-        local files_to_skip=()
-        local count=1
-        
-        for model_path in "${!models[@]}"; do
-            local target_path="$COMFYUI_DIR/models/$model_path"
-            local url="${models[$model_path]}"
-            
-            log "[$count/${#models[@]}] Checking $model_path..." "$BLUE"
-            
-            # Check if file exists and has valid size (> 1MB)
-            if [ -f "$target_path" ]; then
-                local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
-                if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
-                    log "✅ $model_path already exists with valid size ($(format_size $size))" "$GREEN"
-                    files_to_skip+=("$model_path")
-                else
-                    log "⚠️ $model_path exists but may be incomplete ($(format_size $size))" "$YELLOW" "WARNING"
-                    rm -f "$target_path"  # Remove incomplete file
-                    files_to_download+=("$model_path")
-                fi
-            else
-                log "❌ $model_path missing, will download" "$YELLOW" "WARNING"
-                files_to_download+=("$model_path")
-            fi
-            
-            count=$((count + 1))
-        done
-        
-        # Display summary of files to skip and download
-        log "Files to skip: ${#files_to_skip[@]}" "$BLUE"
-        log "Files to download: ${#files_to_download[@]}" "$BLUE"
-        
-        # If all files exist and are valid, we're done
-        if [ ${#files_to_download[@]} -eq 0 ]; then
-            log "All files already exist and are valid. No downloads needed." "$GREEN"
-            return 0
-        fi
-        
-        # Download only the files that don't exist or are incomplete
-        local download_success=true
-        
-        for model_path in "${files_to_download[@]}"; do
-            local target_path="$COMFYUI_DIR/models/$model_path"
-            local url="${models[$model_path]}"
-            
-            log "Downloading $model_path..." "$BLUE"
-            local retry_count=0
-            local max_retries=3
-            local download_ok=false
-            
-            while [ $retry_count -lt $max_retries ]; do
-                # Use wget with progress bar and file size information
-                if wget --progress=bar:force:noscroll \
-                    --no-check-certificate \
-                    --retry-connrefused \
-                    --retry-on-http-error=503 \
-                    --tries=5 \
-                    --continue \
-                    --timeout=60 \
-                    --waitretry=30 \
-                    --show-progress \
-                    -O "$target_path" "$url" 2>&1; then
-                    # Verify the downloaded file
-                    local downloaded_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
-                    if [ "$downloaded_size" -gt 1048576 ]; then  # 1MB in bytes
-                        log "✅ Successfully downloaded $model_path ($(format_size $downloaded_size))" "$GREEN"
-                        download_ok=true
-                        break
-                    else
-                        log "⚠️ Downloaded file is too small ($(format_size $downloaded_size))" "$YELLOW" "WARNING"
-                        rm -f "$target_path"  # Remove incomplete file
-                    fi
-                fi
-                
-                retry_count=$((retry_count + 1))
-                if [ $retry_count -lt $max_retries ]; then
-                    log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
-                    sleep 5
-                else
-                    log "❌ Failed to download $model_path after $max_retries attempts" "$RED" "ERROR"
-                fi
-            done
-            
-            if [ "$download_ok" = false ]; then
-                download_success=false
-            fi
-        done
-        
-        # Verify all downloads
-        log "Verifying model downloads..." "$BLUE"
-        local all_valid=true
-        
-        for model_path in "${!models[@]}"; do
-            local target_path="$COMFYUI_DIR/models/$model_path"
-            
-            if [ -f "$target_path" ]; then
-                local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
-                if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
-                    log "✅ $model_path verified ($(format_size $size))" "$GREEN"
-                else
-                    log "❌ $model_path is too small ($(format_size $size))" "$RED" "ERROR"
-                    all_valid=false
-                fi
-            else
-                log "❌ $model_path missing" "$RED" "ERROR"
-                all_valid=false
-            fi
-        done
-        
-        if [ "$all_valid" = true ]; then
-            log "All WAN 2.1 models verified successfully!" "$GREEN"
-            return 0
-        else
-            log "Some models failed verification. Please check the errors above." "$RED" "ERROR"
-            return 1
-        fi
-    }
-    
-    # Download WAN 2.1 models
-    download_wan_models
+    done
+
+    # Then download missing or invalid files
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Downloading missing or invalid models..."
+    for model_info in "${MODELS[@]}"; do
+        IFS=':' read -r path size url <<< "$model_info"
+        output_path="/workspace/ComfyUI/models/$path"
+        download_model "$url" "$output_path" "$size"
+    done
     
     # Install extensions after ComfyUI setup
     install_extensions
