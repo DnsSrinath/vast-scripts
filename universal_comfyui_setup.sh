@@ -1115,11 +1115,15 @@ main() {
     # Prepare system
     prepare_system || error_exit "System preparation failed"
     
-    # Check system compatibility
-    check_system_compatibility || error_exit "System compatibility check failed"
+    # Initialize metadata system first
+    log "Initializing metadata system..." "$GREEN"
+    initialize_metadata
     
-    # Check CUDA compatibility and store in metadata
-    check_cuda_compatibility
+    # Check system compatibility (non-blocking)
+    check_system_compatibility || log "System compatibility check failed, continuing anyway..." "$YELLOW" "WARNING"
+    
+    # Check CUDA compatibility and store in metadata (non-blocking)
+    check_cuda_compatibility || log "CUDA check failed, continuing in CPU mode..." "$YELLOW" "WARNING"
     
     # Check if ComfyUI is already installed
     local comfyui_status=$(check_comfyui_installed)
