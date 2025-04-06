@@ -521,23 +521,61 @@ main() {
     cat > download_models.py << 'EOF'
 import os
 import sys
+import time
 from huggingface_hub import hf_hub_download
 from tqdm import tqdm
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+def setup_requests_session():
+    """Setup a requests session with retry logic."""
+    session = requests.Session()
+    retries = Retry(
+        total=5,
+        backoff_factor=1,
+        status_forcelist=[500, 502, 503, 504]
+    )
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+    return session
 
 def download_model(repo_id, filename, local_dir):
-    """Download a model from Hugging Face with progress bar."""
+    """Download a model from Hugging Face with progress bar and retry logic."""
     try:
         print(f"\nDownloading {filename} to {local_dir}...")
+        session = setup_requests_session()
+        
+        # Get file size first
+        try:
+            response = session.head(f"https://huggingface.co/{repo_id}/resolve/main/{filename}")
+            total_size = int(response.headers.get('content-length', 0))
+            print(f"File size: {total_size / (1024*1024*1024):.2f} GB")
+        except Exception as e:
+            print(f"Warning: Could not get file size: {e}")
+            total_size = None
+
+        # Download with progress bar
         local_path = hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             local_dir=local_dir,
             local_dir_use_symlinks=False,
             resume_download=True,
-            force_download=True
+            force_download=True,
+            token=None,  # Use anonymous access
+            max_retries=5,
+            retry_on_error=True
         )
-        print(f"✅ Successfully downloaded {filename}")
-        return True
+        
+        # Verify file exists and has size
+        if os.path.exists(local_path):
+            size = os.path.getsize(local_path)
+            print(f"✅ Successfully downloaded {filename} ({size / (1024*1024*1024):.2f} GB)")
+            return True
+        else:
+            print(f"❌ File not found after download: {local_path}")
+            return False
+            
     except Exception as e:
         print(f"❌ Failed to download {filename}: {str(e)}")
         return False
@@ -574,16 +612,26 @@ def main():
         print(f"{i}. {model['file']} -> {model['dir']}")
     print("="*80 + "\n")
     
-    # Download each model
+    # Download each model with retry logic
     for i, model in enumerate(models, 1):
         dir_name = model["dir"]
         file_name = model["file"]
         local_dir = os.path.join("..", "models", dir_name)
         
         print(f"\n[{i}/{len(models)}] Downloading {file_name} to {dir_name}...")
-        if not download_model(repo_id, file_name, local_dir):
-            print(f"❌ Failed to download {file_name}")
-            sys.exit(1)
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            if download_model(repo_id, file_name, local_dir):
+                break
+            retry_count += 1
+            if retry_count < max_retries:
+                print(f"Retrying download (attempt {retry_count + 1}/{max_retries})...")
+                time.sleep(30)  # Wait 30 seconds before retry
+            else:
+                print(f"❌ Failed to download {file_name} after {max_retries} attempts")
+                sys.exit(1)
     
     print("\n✅ All downloads completed successfully!")
 
@@ -606,18 +654,27 @@ EOF
     log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$GREEN"
     
     # Run the Python script with output redirection and debug mode
-    PYTHONUNBUFFERED=1 python3 -u download_models.py 2>&1 | tee model_download_progress.log || {
+    # Increased timeout to 3600 seconds (60 minutes) and added more retries
+    if ! run_command "PYTHONUNBUFFERED=1 python3 -u download_models.py" "Model download failed" 3600 5 30; then
         log "Model download failed. Check model_download_progress.log for details" "$RED" "ERROR"
         error_exit "Model download failed"
-    }
+    fi
     
-    # Verify downloads
+    # Verify downloads with detailed logging
     log "Verifying model downloads..." "$GREEN"
+    local missing_models=false
     for dir in diffusion_models text_encoders clip_vision vae; do
-        if [ ! "$(ls -A $dir)" ]; then
-            error_exit "Model directory $dir is empty after download"
+        if [ ! "$(ls -A $COMFYUI_DIR/models/$dir)" ]; then
+            log "Model directory $dir is empty after download" "$RED" "ERROR"
+            missing_models=true
+        else
+            log "Found models in $dir: $(ls -lh $COMFYUI_DIR/models/$dir)" "$GREEN"
         fi
     done
+    
+    if [ "$missing_models" = true ]; then
+        error_exit "Some model directories are empty after download"
+    fi
     
     log "All WAN 2.1 models downloaded successfully!" "$GREEN"
     
