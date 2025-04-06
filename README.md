@@ -41,6 +41,24 @@ The startup script automatically installs the following plugins (if not already 
 2. Copy the contents of `vast_startup.sh` to the "On-start Script" field
 3. Start the instance - ComfyUI will be available at port 8188
 
+## Manual Startup
+If the automatic startup fails, you can manually start ComfyUI with these commands:
+
+```bash
+# Create log directory if it doesn't exist
+mkdir -p /workspace/logs
+
+# Kill any existing ComfyUI processes
+pkill -f "python3.*main.py.*--port 8188"
+
+# Start ComfyUI
+cd /opt/workspace-internal/ComfyUI && \
+nohup python3 main.py --port 8188 --listen 0.0.0.0 > /workspace/logs/comfyui.log 2>&1 &
+
+# Check if ComfyUI is running
+ps aux | grep "python3.*main.py.*--port 8188"
+```
+
 ## Logging and Monitoring
 To check the ComfyUI logs, use the following commands:
 
@@ -78,6 +96,7 @@ cat /workspace/comfyui.pid
   - Verify that the script has execute permissions
   - Check the log files for any error messages
   - Try manually running the script to see if it works
+  - Use the manual startup commands if automatic startup fails
 
 - **Port already in use**:
   - The script will automatically kill any existing ComfyUI processes before starting
