@@ -45,20 +45,20 @@ The startup script automatically installs the following plugins (if not already 
 If the automatic startup fails, you can manually run the startup script from GitHub:
 
 ```bash
-# Clone the repository if not already cloned
-git clone https://github.com/DnsSrinath/vast-scripts.git /workspace/vast-scripts
+# Clone the repository
+git clone https://github.com/DnsSrinath/vast-scripts.git
 
 # Check the repository structure
-ls -la /workspace/vast-scripts
+ls -la vast-scripts
 
 # Find the startup script
-find /workspace/vast-scripts -name "vast_startup.sh"
+find vast-scripts -name "vast_startup.sh"
 
 # Make the script executable (use the correct path from the find command)
-chmod +x /workspace/vast-scripts/vast-scripts/vast_startup.sh
+chmod +x vast-scripts/vast-scripts/vast_startup.sh
 
 # Run the startup script
-/workspace/vast-scripts/vast-scripts/vast_startup.sh
+./vast-scripts/vast-scripts/vast_startup.sh
 ```
 
 ## Handling GitHub Authentication Issues
@@ -74,7 +74,7 @@ If you encounter GitHub authentication prompts when installing plugins, you can:
 2. **Skip problematic plugins**:
    ```bash
    # Edit the vast_startup.sh script to remove problematic plugins
-   sed -i '/comfyui-reactor-node/d' /workspace/vast_startup.sh
+   sed -i '/comfyui-reactor-node/d' vast_startup.sh
    ```
 
 3. **Use SSH instead of HTTPS**:
