@@ -88,7 +88,8 @@ COMFYUI_CUSTOM_NODES="/content/ComfyUI/custom_nodes"
 # Function to check if inside a Docker container
 check_docker() {
     if [ ! -f /.dockerenv ]; then
-        echo -e "${YELLOW}Warning: Not running inside a Docker container. Proceed with caution.${NC}"
+        echo -e "${RED}Error: This script must be run inside the ComfyUI Docker container.${NC}"
+        exit 1
     fi
 }
 
@@ -115,6 +116,34 @@ install_comfyui_manager() {
     echo -e "${GREEN}ComfyUI Manager installed successfully!${NC}"
 }
 
+# Restart ComfyUI Docker container
+restart_comfyui() {
+    echo -e "${YELLOW}Attempting to restart ComfyUI container...${NC}"
+    
+    # Try multiple restart methods
+    if command -v docker &> /dev/null; then
+        # If docker command is available
+        CONTAINER_ID=$(docker ps | grep comfyui | awk '{print $1}')
+        if [ -n "$CONTAINER_ID" ]; then
+            docker restart "$CONTAINER_ID"
+            echo -e "${GREEN}Docker container restarted successfully.${NC}"
+            return 0
+        fi
+    fi
+
+    # Fallback restart method
+    if [ -f /run.sh ]; then
+        echo -e "${YELLOW}Using /run.sh to restart services...${NC}"
+        /run.sh &
+        echo -e "${GREEN}Services restarted.${NC}"
+        return 0
+    fi
+
+    # If all restart methods fail
+    echo -e "${RED}Could not restart ComfyUI. Please restart manually.${NC}"
+    return 1
+}
+
 # Main installation process
 main() {
     # Check Docker context
@@ -123,9 +152,12 @@ main() {
     # Install ComfyUI Manager
     install_comfyui_manager
 
+    # Restart ComfyUI
+    restart_comfyui
+
     # Print completion message
     echo -e "\n${GREEN}ComfyUI Manager Installation Complete!${NC}"
-    echo -e "${YELLOW}Restart your Docker container or ComfyUI to see the changes.${NC}"
+    echo -e "${YELLOW}ComfyUI has been restarted.${NC}"
     echo -e "Manager will be available in the ComfyUI interface under the 'Manager' tab."
 }
 
