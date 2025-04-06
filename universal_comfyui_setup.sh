@@ -931,10 +931,7 @@ main() {
     
     # Function to download WAN 2.1 models
     download_wan_models() {
-        log "Downloading WAN 2.1 models..." "$BLUE"
-        log "This may take a while. The models are large files..." "$YELLOW" "WARNING"
-        log "Downloading WAN 2.1 models (several GB in size)..." "$YELLOW" "WARNING"
-        log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
+        log "Checking WAN 2.1 models..." "$BLUE"
         
         # Create model directories
         mkdir -p "$COMFYUI_DIR/models/clip_vision"
@@ -942,42 +939,37 @@ main() {
         mkdir -p "$COMFYUI_DIR/models/diffusion_models"
         mkdir -p "$COMFYUI_DIR/models/vae"
         
-        # Create placeholder files
-        touch "$COMFYUI_DIR/models/clip_vision/put_clip_vision_models_here"
-        touch "$COMFYUI_DIR/models/text_encoders/put_text_encoder_files_here"
-        touch "$COMFYUI_DIR/models/diffusion_models/put_diffusion_model_files_here"
-        touch "$COMFYUI_DIR/models/vae/put_vae_here"
-        
-        # Using official Comfy-Org repository
-        log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$BLUE"
-        
-        # Define models to download
+        # Define models to check/download
         local models=(
-            "clip_vision:clip_vision_h.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
-            "text_encoders:umt5_xxl_fp8_e4m3fn_scaled.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-            "diffusion_models:wan2.1_i2v_480p_14B_fp8_scaled.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
-            "vae:wan_2.1_vae.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+            "clip_vision:clip_vision_h.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors:1264219396"
+            "text_encoders:umt5_xxl_fp8_e4m3fn_scaled.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors:1264219396"
+            "diffusion_models:wan2.1_i2v_480p_14B_fp8_scaled.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors:1264219396"
+            "vae:wan_2.1_vae.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors:1264219396"
         )
         
-        log "Total files to download: ${#models[@]}" "$BLUE"
-        log "Files to download:" "$BLUE"
+        log "Total files to check: ${#models[@]}" "$BLUE"
         
-        for model in "${models[@]}"; do
-            IFS=':' read -r dir file url <<< "$model"
-            log "$dir: $file -> $dir" "$BLUE"
-        done
-        
-        # Download each model
+        # Check and download each model
         local count=1
         for model in "${models[@]}"; do
-            IFS=':' read -r dir file url <<< "$model"
-            log "[$count/${#models[@]}] Downloading to $dir..." "$BLUE"
-            log "Downloading $file..." "$BLUE"
+            IFS=':' read -r dir file url expected_size <<< "$model"
+            local target_path="$COMFYUI_DIR/models/$dir/$file"
             
-            # Get file size
-            local size=$(curl -sI "$url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
-            if [ -n "$size" ]; then
-                log "File size: $(format_size $size)" "$YELLOW" "WARNING"
+            log "[$count/${#models[@]}] Checking $file in $dir..." "$BLUE"
+            
+            # Check if file exists and has correct size
+            if [ -f "$target_path" ]; then
+                local actual_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+                if [ "$actual_size" = "$expected_size" ]; then
+                    log "✅ $file already exists with correct size ($(format_size $actual_size))" "$GREEN"
+                    count=$((count + 1))
+                    continue
+                else
+                    log "⚠️ $file exists but has incorrect size (expected: $(format_size $expected_size), actual: $(format_size $actual_size))" "$YELLOW" "WARNING"
+                    log "Re-downloading $file..." "$YELLOW" "WARNING"
+                fi
+            else
+                log "Downloading $file..." "$BLUE"
             fi
             
             # Download the model
@@ -986,10 +978,19 @@ main() {
             
             while [ $retry_count -lt $max_retries ]; do
                 if download_model "$url" "$COMFYUI_DIR/models/$dir" "$file"; then
-                    break
+                    # Verify the downloaded file size
+                    local downloaded_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+                    if [ "$downloaded_size" = "$expected_size" ]; then
+                        log "✅ Successfully downloaded and verified $file ($(format_size $downloaded_size))" "$GREEN"
+                        break
+                    else
+                        log "⚠️ Downloaded file size mismatch (expected: $(format_size $expected_size), actual: $(format_size $downloaded_size))" "$YELLOW" "WARNING"
+                        retry_count=$((retry_count + 1))
+                    fi
+                else
+                    retry_count=$((retry_count + 1))
                 fi
                 
-                retry_count=$((retry_count + 1))
                 if [ $retry_count -lt $max_retries ]; then
                     log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
                     sleep 5
@@ -999,35 +1000,33 @@ main() {
             count=$((count + 1))
         done
         
-        log "All downloads completed successfully!" "$GREEN"
-        
-        # Verify downloads
+        # Verify all downloads
         log "Verifying model downloads..." "$BLUE"
-        for dir in "clip_vision" "text_encoders" "diffusion_models" "vae"; do
-            local total_size=0
-            local files=()
+        local all_valid=true
+        
+        for model in "${models[@]}"; do
+            IFS=':' read -r dir file url expected_size <<< "$model"
+            local target_path="$COMFYUI_DIR/models/$dir/$file"
             
-            # Calculate total size
-            while IFS= read -r file; do
-                if [ -f "$file" ]; then
-                    local size=$(stat -c%s "$file" 2>/dev/null || echo 0)
-                    total_size=$((total_size + size))
-                    files+=("$(basename "$file")")
+            if [ -f "$target_path" ]; then
+                local actual_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+                if [ "$actual_size" = "$expected_size" ]; then
+                    log "✅ $file verified ($(format_size $actual_size))" "$GREEN"
+                else
+                    log "❌ $file size mismatch (expected: $(format_size $expected_size), actual: $(format_size $actual_size))" "$RED" "ERROR"
+                    all_valid=false
                 fi
-            done < <(find "$COMFYUI_DIR/models/$dir" -type f -name "*.safetensors")
-            
-            if [ ${#files[@]} -gt 0 ]; then
-                log "Found models in $dir: total $(format_size $total_size)" "$GREEN"
-                for file in "${files[@]}"; do
-                    local size=$(stat -c%s "$COMFYUI_DIR/models/$dir/$file" 2>/dev/null || echo 0)
-                    log "- $file ($(format_size $size))" "$GREEN"
-                done
             else
-                log "No models found in $dir" "$YELLOW" "WARNING"
+                log "❌ $file missing" "$RED" "ERROR"
+                all_valid=false
             fi
         done
         
-        log "All WAN 2.1 models downloaded successfully!" "$GREEN"
+        if [ "$all_valid" = true ]; then
+            log "All WAN 2.1 models verified successfully!" "$GREEN"
+        else
+            log "Some models failed verification. Please check the errors above." "$RED" "ERROR"
+        fi
     }
     
     # Download WAN 2.1 models
