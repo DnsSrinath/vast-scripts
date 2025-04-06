@@ -1284,7 +1284,7 @@ download_model() {
                 # If size difference is significant, try to verify if the file is still valid
                 if [ "$downloaded_size" -gt 1048576 ]; then  # If file is at least 1MB
                     # Check if the file has a valid structure (basic check)
-                    if file "$temp_file" | grep -q "data"; then
+                    if [ "$(get_file_size "$temp_file")" -gt 1048576 ]; then  # If file is at least 1MB
                         log "⚠️ Size mismatch for $model_name ($(format_size "$downloaded_size") vs $(format_size "$expected_size")), but file appears valid" "$YELLOW" "WARNING"
                         log "Proceeding with the downloaded file despite size mismatch" "$YELLOW" "WARNING"
                         
