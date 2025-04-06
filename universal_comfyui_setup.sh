@@ -1226,6 +1226,8 @@ download_model() {
     local downloaded_size="0"
     local size_diff="0"
     local success=false
+    local max_retries=3
+    local retry_count=0
     
     # Validate parameters first
     if [ -z "$url" ] || [ -z "$output_path" ]; then
@@ -1560,14 +1562,20 @@ main() {
         # Create directory if it doesn't exist
         mkdir -p "$(dirname "$output_path")" || error_exit "Failed to create directory for $model_name"
         
-        # Check if file already exists
+        # Check if file already exists and has correct size
         if [ -f "$output_path" ]; then
-            log "Model $model_name already exists, skipping..." "$GREEN"
-            continue
+            actual_size=$(stat -c %s "$output_path" 2>/dev/null || echo "0")
+            if [ "$actual_size" = "$size" ]; then
+                log "Model $model_name already exists with correct size ($(numfmt --to=iec-i --suffix=B $size)), skipping..." "$GREEN"
+                continue
+            else
+                log "Model $model_name exists but size mismatch ($(numfmt --to=iec-i --suffix=B $actual_size) vs $(numfmt --to=iec-i --suffix=B $size)), re-downloading..." "$YELLOW"
+                rm -f "$output_path"
+            fi
         fi
         
         # Download the model
-        log "Downloading $model_name..." "$BLUE"
+        log "Downloading $model_name ($(numfmt --to=iec-i --suffix=B $size))..." "$BLUE"
         wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$output_path" || \
             error_exit "Failed to download $model_name"
         
@@ -1576,7 +1584,13 @@ main() {
             error_exit "Downloaded file $model_name is missing or empty"
         fi
         
-        log "Successfully downloaded $model_name" "$GREEN"
+        # Verify the downloaded size matches expected size
+        actual_size=$(stat -c %s "$output_path" 2>/dev/null || echo "0")
+        if [ "$actual_size" != "$size" ]; then
+            error_exit "Downloaded file $model_name size mismatch ($(numfmt --to=iec-i --suffix=B $actual_size) vs $(numfmt --to=iec-i --suffix=B $size))"
+        fi
+        
+        log "Successfully downloaded $model_name ($(numfmt --to=iec-i --suffix=B $actual_size))" "$GREEN"
     done
     
     # Step 4: Extensions Installation
