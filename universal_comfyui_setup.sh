@@ -699,23 +699,45 @@ display_summary() {
         log "  - Status: ❌ Failed" "$RED" "ERROR"
     fi
     
-    # Model downloads
+    # Model downloads with enhanced status
     log "Model Downloads:" "$GREEN"
     local total_size=0
     local missing_models=()
+    local skipped_models=()
+    local downloaded_models=()
     
-    for dir in diffusion_models text_encoders clip_vision vae; do
-        if [ -d "$COMFYUI_DIR/models/$dir" ]; then
-            local dir_size=$(du -sh "$COMFYUI_DIR/models/$dir" | cut -f1)
-            local file_count=$(find "$COMFYUI_DIR/models/$dir" -type f | wc -l)
-            log "  - $dir: ✅ $file_count files ($dir_size)" "$GREEN"
-            
-            # Add to total size
-            local size_bytes=$(du -sb "$COMFYUI_DIR/models/$dir" | cut -f1)
-            total_size=$((total_size + size_bytes))
+    # Define expected models
+    declare -A expected_models=(
+        ["clip_vision/clip_vision_h.safetensors"]="CLIP Vision"
+        ["text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"]="Text Encoder"
+        ["diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"]="Diffusion Model"
+        ["vae/wan_2.1_vae.safetensors"]="VAE"
+    )
+    
+    # Check each model
+    for model_path in "${!expected_models[@]}"; do
+        local target_path="$COMFYUI_DIR/models/$model_path"
+        local model_name="${expected_models[$model_path]}"
+        
+        if [ -f "$target_path" ]; then
+            local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+            if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
+                local formatted_size=$(format_size $size)
+                if [ -f "$target_path.downloaded" ]; then
+                    log "  - $model_name: ✅ Downloaded ($formatted_size)" "$GREEN"
+                    downloaded_models+=("$model_name")
+                else
+                    log "  - $model_name: ⏭️ Skipped (already exists, $formatted_size)" "$BLUE"
+                    skipped_models+=("$model_name")
+                fi
+                total_size=$((total_size + size))
+            else
+                log "  - $model_name: ❌ Invalid size ($(format_size $size))" "$RED" "ERROR"
+                missing_models+=("$model_name")
+            fi
         else
-            log "  - $dir: ❌ Missing" "$RED" "ERROR"
-            missing_models+=("$dir")
+            log "  - $model_name: ❌ Missing" "$RED" "ERROR"
+            missing_models+=("$model_name")
         fi
     done
     
@@ -731,6 +753,12 @@ display_summary() {
     else
         log "  - Total Size: $total_kb KB" "$GREEN"
     fi
+    
+    # Show download statistics
+    log "Download Statistics:" "$GREEN"
+    log "  - Skipped: ${#skipped_models[@]} models" "$BLUE"
+    log "  - Downloaded: ${#downloaded_models[@]} models" "$GREEN"
+    log "  - Missing/Failed: ${#missing_models[@]} models" "$RED" "ERROR"
     
     # Extensions
     log "Extensions:" "$GREEN"
@@ -760,7 +788,7 @@ display_summary() {
     if [ ${#missing_models[@]} -gt 0 ]; then
         log "Issues Detected:" "$YELLOW" "WARNING"
         for model in "${missing_models[@]}"; do
-            log "  - Missing model directory: $model" "$YELLOW" "WARNING"
+            log "  - Missing model: $model" "$YELLOW" "WARNING"
         done
     fi
     
@@ -951,40 +979,62 @@ main() {
         
         # Check and download each model
         local count=1
+        local download_success=false
+        
         for model_path in "${!models[@]}"; do
             local target_path="$COMFYUI_DIR/models/$model_path"
             local url="${models[$model_path]}"
             
             log "[$count/${#models[@]}] Checking $model_path..." "$BLUE"
             
-            # Simple check if file exists
+            # Check if file exists and has valid size (> 1MB)
             if [ -f "$target_path" ]; then
-                log "✅ $model_path already exists" "$GREEN"
-                count=$((count + 1))
-                continue
+                local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+                if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
+                    log "✅ $model_path already exists with valid size ($(format_size $size))" "$GREEN"
+                    count=$((count + 1))
+                    continue
+                else
+                    log "⚠️ $model_path exists but may be incomplete ($(format_size $size))" "$YELLOW" "WARNING"
+                    rm -f "$target_path"  # Remove incomplete file
+                fi
             fi
             
-            # Download if file doesn't exist
+            # Download if file doesn't exist or was incomplete
             log "Downloading $model_path..." "$BLUE"
             local retry_count=0
             local max_retries=3
+            download_success=false
             
             while [ $retry_count -lt $max_retries ]; do
                 if wget --no-check-certificate --retry-connrefused --retry-on-http-error=503 \
                     --tries=5 --continue --timeout=60 --waitretry=30 \
                     -O "$target_path" "$url" 2>/dev/null; then
-                    log "✅ Successfully downloaded $model_path" "$GREEN"
-                    break
-                else
-                    retry_count=$((retry_count + 1))
-                    if [ $retry_count -lt $max_retries ]; then
-                        log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
-                        sleep 5
+                    # Verify the downloaded file
+                    local downloaded_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+                    if [ "$downloaded_size" -gt 1048576 ]; then  # 1MB in bytes
+                        log "✅ Successfully downloaded $model_path ($(format_size $downloaded_size))" "$GREEN"
+                        download_success=true
+                        break
                     else
-                        log "❌ Failed to download $model_path after $max_retries attempts" "$RED" "ERROR"
+                        log "⚠️ Downloaded file is too small ($(format_size $downloaded_size))" "$YELLOW" "WARNING"
+                        rm -f "$target_path"  # Remove incomplete file
                     fi
                 fi
+                
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt $max_retries ]; then
+                    log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
+                    sleep 5
+                else
+                    log "❌ Failed to download $model_path after $max_retries attempts" "$RED" "ERROR"
+                fi
             done
+            
+            if [ "$download_success" = false ]; then
+                log "❌ Failed to download $model_path" "$RED" "ERROR"
+                return 1
+            fi
             
             count=$((count + 1))
         done
@@ -998,10 +1048,10 @@ main() {
             
             if [ -f "$target_path" ]; then
                 local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
-                if [ "$size" -gt 0 ]; then
+                if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
                     log "✅ $model_path verified ($(format_size $size))" "$GREEN"
                 else
-                    log "❌ $model_path is empty" "$RED" "ERROR"
+                    log "❌ $model_path is too small ($(format_size $size))" "$RED" "ERROR"
                     all_valid=false
                 fi
             else
@@ -1012,8 +1062,10 @@ main() {
         
         if [ "$all_valid" = true ]; then
             log "All WAN 2.1 models verified successfully!" "$GREEN"
+            return 0
         else
             log "Some models failed verification. Please check the errors above." "$RED" "ERROR"
+            return 1
         fi
     }
     
