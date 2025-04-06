@@ -6,6 +6,11 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Base ComfyUI directory
+COMFYUI_BASE="/workspace/ComfyUI"
+COMFYUI_MODELS_DIR="$COMFYUI_BASE/models"
+COMFYUI_CUSTOM_NODES="$COMFYUI_BASE/custom_nodes"
+
 # Models configuration
 MODELS=(
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors wan_2.1_vae.safetensors vae"
@@ -13,11 +18,12 @@ MODELS=(
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors wan2.1_t2v_14B_fp8_scaled.safetensors diffusion_models"
 )
 
-# Create models directories
-COMFYUI_MODELS_DIR="./ComfyUI/models"
-mkdir -p "$COMFYUI_MODELS_DIR/vae"
-mkdir -p "$COMFYUI_MODELS_DIR/text_encoders"
-mkdir -p "$COMFYUI_MODELS_DIR/diffusion_models"
+# Prepare models directories
+prepare_model_dirs() {
+    mkdir -p "$COMFYUI_MODELS_DIR/vae"
+    mkdir -p "$COMFYUI_MODELS_DIR/text_encoders"
+    mkdir -p "$COMFYUI_MODELS_DIR/diffusion_models"
+}
 
 # Function to download with wget and show progress
 download_model() {
@@ -40,51 +46,40 @@ download_model() {
     # Check download status
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Successfully downloaded $filename${NC}"
+        # Verify file size
+        local file_size=$(stat -c%s "$full_path")
+        echo -e "${YELLOW}File size: $(( file_size / 1024 / 1024 )) MB${NC}"
     else
         echo -e "${RED}Failed to download $filename${NC}"
         return 1
     fi
 }
 
-# Main download loop
-failed_downloads=0
-for model in "${MODELS[@]}"; do
-    # Split the model string
-    read -r url filename model_dir <<< "$model"
-    
-    # Attempt download
-    download_model "$url" "$filename" "$model_dir"
-    
-    # Track failed downloads
-    if [ $? -ne 0 ]; then
-        ((failed_downloads++))
+# Download models
+download_models() {
+    prepare_model_dirs
+
+    local failed_downloads=0
+    for model in "${MODELS[@]}"; do
+        # Split the model string
+        read -r url filename model_dir <<< "$model"
+        
+        # Attempt download
+        download_model "$url" "$filename" "$model_dir"
+        
+        # Track failed downloads
+        if [ $? -ne 0 ]; then
+            ((failed_downloads++))
+        fi
+    done
+
+    # Final summary
+    if [ $failed_downloads -eq 0 ]; then
+        echo -e "${GREEN}All models downloaded successfully!${NC}"
+    else
+        echo -e "${RED}$failed_downloads model(s) failed to download.${NC}"
     fi
-done
-
-# Final summary
-if [ $failed_downloads -eq 0 ]; then
-    echo -e "${GREEN}All models downloaded successfully!${NC}"
-else
-    echo -e "${RED}$failed_downloads model(s) failed to download.${NC}"
-fi
-
-# Print total downloaded size
-echo -e "${YELLOW}Total approximate download size: 37 GB${NC}"
-echo -e "${YELLOW}Make sure you have sufficient disk space.${NC}"
-
-
-
-#!/bin/bash
-
-# Set colors for output
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-# ComfyUI installation directories
-COMFYUI_BASE="/workspace/ComfyUI"
-COMFYUI_CUSTOM_NODES="$COMFYUI_BASE/custom_nodes"
+}
 
 # Install ComfyUI Manager
 install_comfyui_manager() {
@@ -150,6 +145,9 @@ restart_comfyui() {
 
 # Main installation process
 main() {
+    # Download models
+    download_models
+
     # Install ComfyUI Manager
     install_comfyui_manager
 
@@ -157,7 +155,8 @@ main() {
     restart_comfyui
 
     # Print completion message
-    echo -e "\n${GREEN}ComfyUI Manager Installation Complete!${NC}"
+    echo -e "\n${GREEN}ComfyUI Setup Complete!${NC}"
+    echo -e "${YELLOW}Models downloaded and Manager installed.${NC}"
     echo -e "${YELLOW}Manager will be available in the ComfyUI interface under the 'Manager' tab.${NC}"
 }
 
