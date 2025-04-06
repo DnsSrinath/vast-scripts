@@ -697,8 +697,22 @@ manage_installation_plan() {
         return 1
     }
     
+    # Check if plan and status files exist
+    local plan_exists=false
+    local status_exists=false
+    
+    if [ -f "$plan_file" ]; then
+        plan_exists=true
+        log "Installation plan file already exists" "$GREEN"
+    fi
+    
+    if [ -f "$status_file" ]; then
+        status_exists=true
+        log "Installation status file already exists" "$GREEN"
+    fi
+    
     # If plan doesn't exist, create it
-    if [ ! -f "$plan_file" ]; then
+    if [ "$plan_exists" = false ]; then
         # Create plan file with proper error handling
         if ! cat > "$plan_file" << 'EOF'
 # ComfyUI Installation Plan
@@ -738,8 +752,12 @@ EOF
             log "Failed to create installation plan file" "$RED" "ERROR"
             return 1
         fi
+        log "Created new installation plan file" "$GREEN"
+    fi
 
-        # Initialize status file with proper error handling
+    # Initialize or update status file
+    if [ "$status_exists" = false ]; then
+        # Create new status file
         if ! cat > "$status_file" << 'EOF'
 # Installation Status
 # Created: $(date '+%Y-%m-%d %H:%M:%S')
@@ -753,6 +771,47 @@ EOF
         then
             log "Failed to create installation status file" "$RED" "ERROR"
             return 1
+        fi
+        log "Created new installation status file" "$GREEN"
+    else
+        # Check if we need to reset the status
+        local reset_status=false
+        
+        # Check if any step is marked as "pending" or "in_progress"
+        if grep -q "pending\|in_progress" "$status_file"; then
+            log "Found incomplete installation steps, will continue from where we left off" "$YELLOW" "WARNING"
+        else
+            # Check if the installation is too old (more than 24 hours)
+            local last_modified=$(stat -c %Y "$status_file" 2>/dev/null || echo "0")
+            local current_time=$(date +%s)
+            local time_diff=$((current_time - last_modified))
+            
+            if [ $time_diff -gt 86400 ]; then  # 24 hours in seconds
+                log "Installation status is older than 24 hours, will reset status" "$YELLOW" "WARNING"
+                reset_status=true
+            else
+                log "Using existing installation status" "$GREEN"
+            fi
+        fi
+        
+        # Reset status if needed
+        if [ "$reset_status" = true ]; then
+            if ! cat > "$status_file" << 'EOF'
+# Installation Status
+# Created: $(date '+%Y-%m-%d %H:%M:%S')
+# Reset from previous installation
+
+1. System Preparation: pending
+2. ComfyUI Installation: pending
+3. Model Downloads: pending
+4. Extensions Installation: pending
+5. Final Setup: pending
+EOF
+            then
+                log "Failed to reset installation status file" "$RED" "ERROR"
+                return 1
+            fi
+            log "Reset installation status file" "$GREEN"
         fi
     fi
     
@@ -773,6 +832,16 @@ EOF
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
     echo "[$(date '+%Y-%m-%d %H:%M:%S')]            PLAN COMPLETE                     "
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
+    
+    # Display current status
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')]            INSTALLATION STATUS               "
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
+    cat "$status_file" || {
+        log "Failed to display installation status" "$RED" "ERROR"
+        return 1
+    }
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
 }
 
 # Function to update installation status
@@ -790,8 +859,27 @@ update_installation_status() {
     
     # Check if status file exists
     if [ ! -f "$status_file" ]; then
-        log "Status file not found" "$RED" "ERROR"
-        return 1
+        log "Status file not found, creating new one" "$YELLOW" "WARNING"
+        mkdir -p "$metadata_dir" || {
+            log "Failed to create metadata directory" "$RED" "ERROR"
+            return 1
+        }
+        
+        # Create new status file
+        if ! cat > "$status_file" << 'EOF'
+# Installation Status
+# Created: $(date '+%Y-%m-%d %H:%M:%S')
+
+1. System Preparation: pending
+2. ComfyUI Installation: pending
+3. Model Downloads: pending
+4. Extensions Installation: pending
+5. Final Setup: pending
+EOF
+        then
+            log "Failed to create installation status file" "$RED" "ERROR"
+            return 1
+        fi
     fi
     
     # Update status with proper error handling
@@ -799,6 +887,9 @@ update_installation_status() {
         log "Failed to update installation status" "$RED" "ERROR"
         return 1
     fi
+    
+    log "Updated installation status: $step -> $status" "$GREEN"
+    return 0
 }
 
 # Function to display installation plan
@@ -1310,6 +1401,29 @@ check_cuda_compatibility() {
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA is available and working"
         else
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA is not available or not working properly"
+            
+            # Try to fix CUDA issues
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Attempting to fix CUDA issues..."
+            
+            # Install CUDA toolkit if needed
+            if ! command -v nvcc &> /dev/null; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing CUDA toolkit..."
+                apt-get update && apt-get install -y cuda-toolkit-12-0 || \
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA toolkit installation failed" >&2
+            fi
+            
+            # Install PyTorch with CUDA support
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing PyTorch with CUDA support..."
+            pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 || \
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] PyTorch CUDA installation failed" >&2
+            
+            # Try to verify CUDA again
+            if timeout 10 python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+                cuda_available=1
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA is now available and working after fixes"
+            else
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA still not available after fixes, continuing in CPU mode" >&2
+            fi
         fi
     else
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] No NVIDIA GPU detected"
@@ -1355,35 +1469,26 @@ main() {
     # Update status for ComfyUI installation
     update_installation_status "2. ComfyUI Installation" "in_progress"
     
-    # Check if ComfyUI is already installed
-    local comfyui_status=$(check_comfyui_installed)
-    case $comfyui_status in
-        0)  # ComfyUI is installed and complete
-            log "ComfyUI is already installed and complete, skipping installation..." "$GREEN"
-            ;;
-        2)  # ComfyUI is installed but incomplete
-            log "ComfyUI installation is incomplete, fixing missing directories..." "$YELLOW"
-            mkdir -p "$COMFYUI_DIR/models/"{checkpoints,vae,loras,upscale_models,embeddings,hypernetworks,controlnet,gligen}
-            ;;
-        1)  # ComfyUI is not installed
-            # Remove existing ComfyUI directory if it exists but is invalid
-            if [ -d "$COMFYUI_DIR" ]; then
-                log "Removing invalid ComfyUI directory..." "$YELLOW"
-                rm -rf "$COMFYUI_DIR" || error_exit "Failed to remove existing ComfyUI directory"
-            fi
-            
-            # Clone ComfyUI repository
-            log "Cloning ComfyUI repository..." "$GREEN"
-            run_command "git clone https://github.com/comfyanonymous/ComfyUI.git \"$COMFYUI_DIR\"" "Failed to clone ComfyUI repository" || \
-                error_exit "ComfyUI repository clone failed"
-            
-            # Install ComfyUI dependencies
-            log "Installing ComfyUI dependencies..." "$GREEN"
-            cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
-            run_command "pip install -r requirements.txt" "Failed to install ComfyUI dependencies" || \
-                error_exit "ComfyUI dependencies installation failed"
-            ;;
-    esac
+    # Always reinstall ComfyUI to ensure latest version
+    log "Reinstalling ComfyUI to ensure latest version..." "$GREEN"
+    
+    # Remove existing ComfyUI directory if it exists
+    if [ -d "$COMFYUI_DIR" ]; then
+        log "Removing existing ComfyUI directory..." "$YELLOW"
+        rm -rf "$COMFYUI_DIR" || error_exit "Failed to remove existing ComfyUI directory"
+    fi
+    
+    # Clone ComfyUI repository
+    log "Cloning ComfyUI repository..." "$GREEN"
+    run_command "git clone https://github.com/comfyanonymous/ComfyUI.git \"$COMFYUI_DIR\"" "Failed to clone ComfyUI repository" || \
+        error_exit "ComfyUI repository clone failed"
+    
+    # Install ComfyUI dependencies
+    log "Installing ComfyUI dependencies..." "$GREEN"
+    cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
+    run_command "pip install -r requirements.txt" "Failed to install ComfyUI dependencies" || \
+        error_exit "ComfyUI dependencies installation failed"
+    
     update_installation_status "2. ComfyUI Installation" "completed"
     
     # Make all scripts executable
