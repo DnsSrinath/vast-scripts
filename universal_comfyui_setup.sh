@@ -912,9 +912,9 @@ manage_metadata() {
     case "$action" in
         "check")
             if [ -f "$metadata_file" ]; then
-                local stored_size=$(grep "^size=" "$metadata_file" | cut -d'=' -f2)
-                local stored_path=$(grep "^path=" "$metadata_file" | cut -d'=' -f2)
-                local stored_status=$(grep "^status=" "$metadata_file" | cut -d'=' -f2)
+                local stored_size=$(grep "^size=" "$metadata_file" | cut -d'=' -f2 || echo "0")
+                local stored_path=$(grep "^path=" "$metadata_file" | cut -d'=' -f2 || echo "")
+                local stored_status=$(grep "^status=" "$metadata_file" | cut -d'=' -f2 || echo "not_downloaded")
                 
                 # Allow for small size differences (up to 1MB)
                 local size_diff=$((stored_size - expected_size))
@@ -928,7 +928,7 @@ manage_metadata() {
             echo "path=$model_path" > "$metadata_file"
             echo "size=$expected_size" >> "$metadata_file"
             echo "timestamp=$(date +%s)" >> "$metadata_file"
-            echo "checksum=$(md5sum "$model_path" | cut -d' ' -f1)" >> "$metadata_file"
+            echo "checksum=$(md5sum "$model_path" | cut -d' ' -f1 || echo "")" >> "$metadata_file"
             echo "status=verified" >> "$metadata_file"
             
             # Update index
@@ -937,8 +937,8 @@ manage_metadata() {
             ;;
         "verify")
             if [ -f "$metadata_file" ]; then
-                local stored_checksum=$(grep "^checksum=" "$metadata_file" | cut -d'=' -f2)
-                local current_checksum=$(md5sum "$model_path" | cut -d' ' -f1)
+                local stored_checksum=$(grep "^checksum=" "$metadata_file" | cut -d'=' -f2 || echo "")
+                local current_checksum=$(md5sum "$model_path" | cut -d' ' -f1 || echo "")
                 if [ "$stored_checksum" = "$current_checksum" ]; then
                     return 0  # File is valid
                 fi
@@ -947,7 +947,7 @@ manage_metadata() {
             ;;
         "status")
             if [ -f "$metadata_file" ]; then
-                local stored_status=$(grep "^status=" "$metadata_file" | cut -d'=' -f2)
+                local stored_status=$(grep "^status=" "$metadata_file" | cut -d'=' -f2 || echo "not_downloaded")
                 echo "$stored_status"
             else
                 echo "not_downloaded"
@@ -974,7 +974,7 @@ download_model() {
     
     # If file exists but metadata doesn't match, verify it
     if [ -f "$output_path" ]; then
-        local actual_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null)
+        local actual_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null || echo "0")
         if [ "$actual_size" = "$expected_size" ]; then
             # File size matches, update metadata
             manage_metadata "update" "$output_path" "$expected_size"
@@ -988,7 +988,7 @@ download_model() {
     
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Downloading $model_name..."
     if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$output_path"; then
-        local downloaded_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null)
+        local downloaded_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null || echo "0")
         # Allow for small size differences (up to 1MB) due to filesystem differences
         local size_diff=$((downloaded_size - expected_size))
         if [ ${size_diff#-} -le 1048576 ] || [ "$downloaded_size" = "$expected_size" ]; then
@@ -1006,6 +1006,105 @@ download_model() {
     fi
 }
 
+# Function to check if ComfyUI is already installed
+check_comfyui_installed() {
+    local comfyui_dir="/workspace/ComfyUI"
+    local main_py="$comfyui_dir/main.py"
+    local requirements_txt="$comfyui_dir/requirements.txt"
+    
+    # Check if ComfyUI directory exists and contains essential files
+    if [ -d "$comfyui_dir" ] && [ -f "$main_py" ] && [ -f "$requirements_txt" ]; then
+        # Check if main.py is a valid ComfyUI file
+        if grep -q "ComfyUI" "$main_py" 2>/dev/null; then
+            # Check if the installation is complete by verifying key directories
+            local required_dirs=("models" "custom_nodes" "models/checkpoints" "models/vae")
+            local missing_dirs=0
+            
+            for dir in "${required_dirs[@]}"; do
+                if [ ! -d "$comfyui_dir/$dir" ]; then
+                    missing_dirs=1
+                    break
+                fi
+            done
+            
+            if [ $missing_dirs -eq 0 ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ ComfyUI is already installed and complete at $comfyui_dir"
+                return 0
+            else
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ ComfyUI installation is incomplete, will fix missing directories"
+                return 2
+            fi
+        fi
+    fi
+    
+    return 1
+}
+
+# Function to check CUDA compatibility and store in metadata
+check_cuda_compatibility() {
+    local metadata_dir="/workspace/ComfyUI/models/.metadata"
+    local cuda_meta="$metadata_dir/cuda_status.meta"
+    
+    # Create metadata directory if it doesn't exist
+    mkdir -p "$metadata_dir"
+    
+    # Check if we already have a valid CUDA status
+    if [ -f "$cuda_meta" ]; then
+        local last_check=$(grep "^last_check=" "$cuda_meta" | cut -d'=' -f2 || echo "0")
+        local current_time=$(date +%s)
+        local time_diff=$((current_time - last_check))
+        
+        # Only recheck if more than 1 hour has passed
+        if [ $time_diff -lt 3600 ]; then
+            local cuda_status=$(grep "^status=" "$cuda_meta" | cut -d'=' -f2 || echo "unknown")
+            if [ "$cuda_status" = "available" ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Using cached CUDA status: available"
+                return 0
+            elif [ "$cuda_status" = "unavailable" ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Using cached CUDA status: unavailable"
+                return 1
+            fi
+        fi
+    fi
+    
+    # Perform CUDA check
+    local cuda_available=0
+    if command -v nvidia-smi &> /dev/null; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] NVIDIA GPU detected, checking CUDA compatibility..."
+        
+        # Set CUDA environment variables
+        export CUDA_HOME=/usr/local/cuda
+        export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+        export PATH=$CUDA_HOME/bin:$PATH
+        
+        # Check CUDA driver version
+        local cuda_driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA Driver Version: $cuda_driver_version"
+        
+        # Try to verify CUDA is working
+        if python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+            cuda_available=1
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA is available and working"
+        else
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA is not available or not working properly"
+        fi
+    else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] No NVIDIA GPU detected"
+    fi
+    
+    # Store CUDA status in metadata
+    echo "last_check=$(date +%s)" > "$cuda_meta"
+    if [ $cuda_available -eq 1 ]; then
+        echo "status=available" >> "$cuda_meta"
+        echo "driver_version=$cuda_driver_version" >> "$cuda_meta"
+        return 0
+    else
+        echo "status=unavailable" >> "$cuda_meta"
+        echo "driver_version=unknown" >> "$cuda_meta"
+        return 1
+    fi
+}
+
 # Main setup function
 main() {
     log "Starting ComfyUI setup..." "$GREEN"
@@ -1019,22 +1118,38 @@ main() {
     # Check system compatibility
     check_system_compatibility || error_exit "System compatibility check failed"
     
-    # Remove existing ComfyUI directory if it exists
-    if [ -d "$COMFYUI_DIR" ]; then
-        log "Removing existing ComfyUI directory..." "$YELLOW"
-        rm -rf "$COMFYUI_DIR" || error_exit "Failed to remove existing ComfyUI directory"
-    fi
+    # Check CUDA compatibility and store in metadata
+    check_cuda_compatibility
     
-    # Clone ComfyUI repository
-    log "Cloning ComfyUI repository..." "$GREEN"
-    run_command "git clone https://github.com/comfyanonymous/ComfyUI.git \"$COMFYUI_DIR\"" "Failed to clone ComfyUI repository" || \
-        error_exit "ComfyUI repository clone failed"
-    
-    # Install ComfyUI dependencies
-    log "Installing ComfyUI dependencies..." "$GREEN"
-    cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
-    run_command "pip install -r requirements.txt" "Failed to install ComfyUI dependencies" || \
-        error_exit "ComfyUI dependencies installation failed"
+    # Check if ComfyUI is already installed
+    local comfyui_status=$(check_comfyui_installed)
+    case $comfyui_status in
+        0)  # ComfyUI is installed and complete
+            log "ComfyUI is already installed and complete, skipping installation..." "$GREEN"
+            ;;
+        2)  # ComfyUI is installed but incomplete
+            log "ComfyUI installation is incomplete, fixing missing directories..." "$YELLOW"
+            mkdir -p "$COMFYUI_DIR/models/"{checkpoints,vae,loras,upscale_models,embeddings,hypernetworks,controlnet,gligen}
+            ;;
+        1)  # ComfyUI is not installed
+            # Remove existing ComfyUI directory if it exists but is invalid
+            if [ -d "$COMFYUI_DIR" ]; then
+                log "Removing invalid ComfyUI directory..." "$YELLOW"
+                rm -rf "$COMFYUI_DIR" || error_exit "Failed to remove existing ComfyUI directory"
+            fi
+            
+            # Clone ComfyUI repository
+            log "Cloning ComfyUI repository..." "$GREEN"
+            run_command "git clone https://github.com/comfyanonymous/ComfyUI.git \"$COMFYUI_DIR\"" "Failed to clone ComfyUI repository" || \
+                error_exit "ComfyUI repository clone failed"
+            
+            # Install ComfyUI dependencies
+            log "Installing ComfyUI dependencies..." "$GREEN"
+            cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
+            run_command "pip install -r requirements.txt" "Failed to install ComfyUI dependencies" || \
+                error_exit "ComfyUI dependencies installation failed"
+            ;;
+    esac
     
     # Make all scripts executable
     log "Making scripts executable..." "$GREEN"
@@ -1042,20 +1157,25 @@ main() {
     run_command "chmod +x *.sh" "Failed to make scripts executable" || \
         error_exit "Failed to make scripts executable"
     
-    # Install ComfyUI-WanVideoWrapper
-    log "Installing ComfyUI-WanVideoWrapper..." "$GREEN"
-    mkdir -p "$COMFYUI_DIR/custom_nodes" || error_exit "Failed to create custom_nodes directory"
-    
-    # Clone the wrapper repository
-    run_command "git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git \"$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper\"" "Failed to clone ComfyUI-WanVideoWrapper" || \
-        error_exit "Failed to install ComfyUI-WanVideoWrapper"
-    
-    # Install wrapper dependencies
-    cd "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" || error_exit "Failed to change to wrapper directory"
-    if [ -f "requirements.txt" ]; then
-        log "Installing wrapper dependencies..." "$GREEN"
-        run_command "pip install -r requirements.txt" "Failed to install wrapper dependencies" || \
-            log "Some wrapper dependencies failed to install" "$YELLOW" "WARNING"
+    # Check if ComfyUI-WanVideoWrapper is already installed
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" ]; then
+        log "ComfyUI-WanVideoWrapper is already installed, skipping..." "$GREEN"
+    else
+        # Install ComfyUI-WanVideoWrapper
+        log "Installing ComfyUI-WanVideoWrapper..." "$GREEN"
+        mkdir -p "$COMFYUI_DIR/custom_nodes" || error_exit "Failed to create custom_nodes directory"
+        
+        # Clone the wrapper repository
+        run_command "git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git \"$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper\"" "Failed to clone ComfyUI-WanVideoWrapper" || \
+            error_exit "Failed to install ComfyUI-WanVideoWrapper"
+        
+        # Install wrapper dependencies
+        cd "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" || error_exit "Failed to change to wrapper directory"
+        if [ -f "requirements.txt" ]; then
+            log "Installing wrapper dependencies..." "$GREEN"
+            run_command "pip install -r requirements.txt" "Failed to install wrapper dependencies" || \
+                log "Some wrapper dependencies failed to install" "$YELLOW" "WARNING"
+        fi
     fi
     
     # Create model directories
