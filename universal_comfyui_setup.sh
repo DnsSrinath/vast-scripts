@@ -1134,6 +1134,7 @@ download_model() {
     local actual_size="0"
     local downloaded_size="0"
     local size_diff="0"
+    local success=false
     
     # Validate parameters first
     if [ -z "$url" ] || [ -z "$output_path" ]; then
@@ -1175,31 +1176,55 @@ download_model() {
     fi
     
     log "Downloading $model_name..." "$BLUE"
-    if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$temp_file"; then
+    
+    # Download with wget and handle errors
+    if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$temp_file" 2>/dev/null; then
+        # Verify the downloaded file exists
+        if [ ! -f "$temp_file" ]; then
+            log "❌ Failed to download $model_name: Temporary file not created" "$RED" "ERROR"
+            return 1
+        fi
+        
+        # Get the downloaded file size
         downloaded_size=$(get_file_size "$temp_file")
+        
+        # Verify the downloaded size
+        if [ "$downloaded_size" = "0" ]; then
+            log "❌ Failed to download $model_name: Downloaded file is empty" "$RED" "ERROR"
+            rm -f "$temp_file"
+            return 1
+        fi
+        
         # Allow for small size differences (up to 1MB) due to filesystem differences
         size_diff=$((downloaded_size - expected_size))
         if [ ${size_diff#-} -le 1048576 ] || [ "$downloaded_size" = "$expected_size" ]; then
-            mv "$temp_file" "$output_path" || {
-                log "Failed to move downloaded file to final location" "$RED" "ERROR"
+            # Move the file to its final location
+            if mv "$temp_file" "$output_path" 2>/dev/null; then
+                manage_metadata "update" "$output_path" "$downloaded_size"
+                log "✅ Successfully downloaded $model_name ($(format_size "$downloaded_size"))" "$GREEN"
+                success=true
+            else
+                log "❌ Failed to move downloaded file to final location" "$RED" "ERROR"
                 rm -f "$temp_file"
                 return 1
-            }
-            manage_metadata "update" "$output_path" "$downloaded_size"
-            log "✅ Successfully downloaded $model_name ($(format_size "$downloaded_size"))" "$GREEN"
-            return 0
+            fi
         else
             log "❌ Downloaded file size mismatch for $model_name ($(format_size "$downloaded_size") vs $(format_size "$expected_size"))" "$RED" "ERROR"
-            rm -f "$temp_file" || {
-                log "Failed to remove invalid file $temp_file" "$RED" "ERROR"
-            }
+            rm -f "$temp_file"
             return 1
         fi
     else
         log "❌ Failed to download $model_name" "$RED" "ERROR"
-        rm -f "$temp_file" || {
-            log "Failed to remove temporary file $temp_file" "$RED" "ERROR"
-        }
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    # Clean up temporary file if it still exists
+    rm -f "$temp_file"
+    
+    if [ "$success" = true ]; then
+        return 0
+    else
         return 1
     fi
 }
