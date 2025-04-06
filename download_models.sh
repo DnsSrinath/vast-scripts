@@ -82,21 +82,20 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Docker ComfyUI custom nodes directory
-COMFYUI_CUSTOM_NODES="/content/ComfyUI/custom_nodes"
-
-# Function to check if inside a Docker container
-check_docker() {
-    if [ ! -f /.dockerenv ]; then
-        echo -e "${RED}Error: This script must be run inside the ComfyUI Docker container.${NC}"
-        exit 1
-    fi
-}
+# ComfyUI installation directories
+COMFYUI_BASE="/workspace/ComfyUI"
+COMFYUI_CUSTOM_NODES="$COMFYUI_BASE/custom_nodes"
 
 # Install ComfyUI Manager
 install_comfyui_manager() {
     echo -e "${YELLOW}Installing ComfyUI Manager...${NC}"
     
+    # Ensure ComfyUI base directory exists
+    if [ ! -d "$COMFYUI_BASE" ]; then
+        echo -e "${RED}Error: ComfyUI directory not found at $COMFYUI_BASE${NC}"
+        exit 1
+    }
+
     # Ensure custom nodes directory exists
     mkdir -p "$COMFYUI_CUSTOM_NODES"
     cd "$COMFYUI_CUSTOM_NODES" || exit 1
@@ -110,55 +109,56 @@ install_comfyui_manager() {
         git pull
     fi
 
-    # Install dependencies (for Docker Python environment)
+    # Install dependencies
     pip install -r requirements.txt
 
     echo -e "${GREEN}ComfyUI Manager installed successfully!${NC}"
 }
 
-# Restart ComfyUI Docker container
+# Attempt to restart ComfyUI
 restart_comfyui() {
-    echo -e "${YELLOW}Attempting to restart ComfyUI container...${NC}"
+    echo -e "${YELLOW}Attempting to restart ComfyUI...${NC}"
     
-    # Try multiple restart methods
-    if command -v docker &> /dev/null; then
-        # If docker command is available
-        CONTAINER_ID=$(docker ps | grep comfyui | awk '{print $1}')
-        if [ -n "$CONTAINER_ID" ]; then
-            docker restart "$CONTAINER_ID"
-            echo -e "${GREEN}Docker container restarted successfully.${NC}"
-            return 0
+    # Check for common start scripts
+    STARTUP_SCRIPTS=(
+        "/workspace/start.sh"
+        "$COMFYUI_BASE/start.sh"
+        "/run.sh"
+    )
+
+    RESTART_FOUND=0
+    for script in "${STARTUP_SCRIPTS[@]}"; do
+        if [ -x "$script" ]; then
+            echo -e "${YELLOW}Found startup script: $script${NC}"
+            "$script" &
+            RESTART_FOUND=1
+            break
         fi
-    fi
+    done
 
-    # Fallback restart method
-    if [ -f /run.sh ]; then
-        echo -e "${YELLOW}Using /run.sh to restart services...${NC}"
-        /run.sh &
-        echo -e "${GREEN}Services restarted.${NC}"
-        return 0
+    # If no startup script found, provide manual restart instructions
+    if [ $RESTART_FOUND -eq 0 ]; then
+        echo -e "${RED}Could not automatically restart ComfyUI.${NC}"
+        echo -e "${YELLOW}Manual Restart Instructions:${NC}"
+        echo -e "1. If you're using a persistent startup method, restart your instance"
+        echo -e "2. Otherwise, navigate to your ComfyUI directory and start it manually"
+        echo -e "   Example: cd $COMFYUI_BASE && python main.py"
+    else
+        echo -e "${GREEN}Restart attempt completed.${NC}"
     fi
-
-    # If all restart methods fail
-    echo -e "${RED}Could not restart ComfyUI. Please restart manually.${NC}"
-    return 1
 }
 
 # Main installation process
 main() {
-    # Check Docker context
-    check_docker
-
     # Install ComfyUI Manager
     install_comfyui_manager
 
-    # Restart ComfyUI
+    # Attempt to restart ComfyUI
     restart_comfyui
 
     # Print completion message
     echo -e "\n${GREEN}ComfyUI Manager Installation Complete!${NC}"
-    echo -e "${YELLOW}ComfyUI has been restarted.${NC}"
-    echo -e "Manager will be available in the ComfyUI interface under the 'Manager' tab."
+    echo -e "${YELLOW}Manager will be available in the ComfyUI interface under the 'Manager' tab.${NC}"
 }
 
 # Run the main function
