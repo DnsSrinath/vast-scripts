@@ -321,8 +321,12 @@ install_comfyui() {
 # Download models with verification and robust error handling
 download_model() {
     local model_path="$1"
-    local model_url="${MODELS[$model_path]%:*}"
-    local expected_size="${MODELS[$model_path]#*:}"
+    local model_info="${MODELS[$model_path]}"
+    
+    # Extract URL and expected size using cut
+    local model_url=$(echo "$model_info" | cut -d':' -f1)
+    local expected_size=$(echo "$model_info" | cut -d':' -f2)
+    
     local target_path="$COMFYUI_DIR/models/$model_path"
     local model_name=$(basename "$model_path")
     local temp_file="${TEMP_DIR}/${model_name}.tmp"
@@ -358,6 +362,7 @@ download_model() {
     fi
     
     log "Downloading $model_name (expected size: $(format_size $expected_size))..." "$BLUE"
+    log "URL: $model_url" "$BLUE" "DEBUG"
     
     # Create temporary directory if it doesn't exist
     mkdir -p "$TEMP_DIR" || {
@@ -924,7 +929,8 @@ main() {
             # Check if the file exists despite the status (manual download or previous run)
             local target_path="$COMFYUI_DIR/models/$model_path"
             if [ -f "$target_path" ]; then
-                local expected_size="${MODELS[$model_path]#*:}"
+                local model_info="${MODELS[$model_path]}"
+                local expected_size=$(echo "$model_info" | cut -d':' -f2)
                 local actual_size=$(stat -c %s "$target_path" 2>/dev/null || echo "0")
                 local size_diff=$((actual_size - expected_size))
                 size_diff=${size_diff#-}  # Absolute value
