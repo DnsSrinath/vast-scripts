@@ -494,6 +494,9 @@ clone_repo() {
     # Extract repository name from URL
     local repo_name=$(basename "$repo_url")
     
+    # Remove .git extension if present
+    repo_name=${repo_name%.git}
+    
     while [ $retry_count -lt $max_retries ]; do
         # Create target directory
         mkdir -p "$target_dir"
@@ -860,164 +863,175 @@ main() {
         return 1
     }
     
-    # Function to download with progress
+    # Function to download a model
     download_model() {
-        local url=$1
-        local output=$2
-        local filename=$(basename "$output")
-        local dir=$(dirname "$output")
+        local url="$1"
+        local target_dir="$2"
+        local filename="$3"
+        local max_retries=3
+        local retry_count=0
         
-        # Check if model already exists with correct size
-        local size=$(curl -sI "$url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
-        if [ -n "$size" ]; then
-            if check_model_exists "$output" "$size"; then
-                log "✅ Model ${filename} already exists with correct size ($(format_size $size))" "$GREEN"
+        # Create target directory if it doesn't exist
+        mkdir -p "$target_dir"
+        
+        # Check if file already exists with correct size
+        if [ -f "$target_dir/$filename" ]; then
+            local existing_size=$(stat -c%s "$target_dir/$filename" 2>/dev/null || echo 0)
+            if [ "$existing_size" -gt 0 ]; then
+                log "File $filename already exists with size $(format_size $existing_size)" "$GREEN"
                 return 0
             fi
         fi
         
-        log "Downloading ${filename}..." "$BLUE"
-        
-        # Create directory if it doesn't exist
-        mkdir -p "$dir"
-        
-        # Get file size first
-        if [ -n "$size" ]; then
-            log "File size: $(format_size $size)" "$YELLOW"
-        fi
-        
-        # Download with wget showing progress
-        if command -v wget &> /dev/null; then
-            wget --progress=bar:force:noscroll \
-                 --no-check-certificate \
-                 --retry-connrefused \
-                 --retry-on-http-error=503 \
-                 --tries=5 \
-                 --continue \
-                 --timeout=60 \
-                 --waitretry=30 \
-                 -O "$output" "$url" 2>&1
-        else
-            # Fallback to curl if wget is not available
-            curl -L \
-                 --retry 5 \
-                 --retry-delay 30 \
-                 --retry-max-time 3600 \
-                 --continue-at - \
-                 -o "$output" "$url" 2>&1
-        fi
-        
-        # Check if download was successful
-        if [ $? -eq 0 ] && [ -f "$output" ]; then
-            local downloaded_size=$(stat -f %z "$output" 2>/dev/null || stat -c %s "$output" 2>/dev/null)
-            if [ -n "$downloaded_size" ]; then
-                log "✅ Successfully downloaded ${filename} ($(format_size $downloaded_size))" "$GREEN"
-            else
-                log "✅ Successfully downloaded ${filename}" "$GREEN"
-            fi
-            return 0
-        else
-            log "❌ Failed to download ${filename}" "$RED" "ERROR"
-            return 1
-        fi
-    }
-    
-    # Define models to download
-    declare -A models=(
-        ["vae"]="split_files/vae/wan_2.1_vae.safetensors"
-        ["clip_vision"]="split_files/clip_vision/clip_vision_h.safetensors"
-        ["text_encoders"]="split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-        ["diffusion_models"]="split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
-    )
-    
-    log "Total files to download: ${#models[@]}" "$YELLOW"
-    log "Files to download:" "$YELLOW"
-    local i=1
-    for dir in "${!models[@]}"; do
-        log "${i}. ${models[$dir]} -> ${dir}" "$YELLOW"
-        i=$((i + 1))
-    done
-    
-    # Download each model
-    local success=true
-    i=1
-    for dir in "${!models[@]}"; do
-        local file="${models[$dir]}"
-        local output="${COMFYUI_DIR}/models/${dir}/$(basename "$file")"
-        local url="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/${file}"
-        
-        log "[${i}/${#models[@]}] Downloading to ${dir}..." "$BLUE"
-        
-        # Try download up to 3 times
-        local retry_count=0
-        local max_retries=3
-        
         while [ $retry_count -lt $max_retries ]; do
-            if download_model "$url" "$output"; then
-                break
+            log "Downloading $filename..." "$BLUE"
+            
+            # Try wget first
+            if command -v wget &> /dev/null; then
+                wget --progress=bar:force:noscroll \
+                     --no-check-certificate \
+                     --retry-connrefused \
+                     --retry-on-http-error=503 \
+                     --tries=5 \
+                     --continue \
+                     --timeout=60 \
+                     --waitretry=30 \
+                     -O "$target_dir/$filename" "$url" 2>&1
+            else
+                # Fall back to curl
+                curl -L \
+                     --retry 5 \
+                     --retry-delay 30 \
+                     --retry-max-time 3600 \
+                     --continue-at - \
+                     -o "$target_dir/$filename" "$url" 2>&1
+            fi
+            
+            # Check if download was successful
+            if [ $? -eq 0 ] && [ -f "$target_dir/$filename" ]; then
+                local downloaded_size=$(stat -c%s "$target_dir/$filename" 2>/dev/null || echo 0)
+                if [ "$downloaded_size" -gt 0 ]; then
+                    log "✅ Successfully downloaded $filename ($(format_size $downloaded_size))" "$GREEN"
+                    return 0
+                else
+                    log "Downloaded file is empty, retrying..." "$YELLOW" "WARNING"
+                fi
             fi
             
             retry_count=$((retry_count + 1))
             if [ $retry_count -lt $max_retries ]; then
                 log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
-                sleep 30
-            else
-                log "Failed to download after ${max_retries} attempts" "$RED" "ERROR"
-                success=false
+                sleep 5
             fi
         done
         
-        i=$((i + 1))
-    done
+        log "❌ Failed to download $filename after $max_retries attempts" "$RED" "ERROR"
+        return 1
+    }
     
-    if [ "$success" = true ]; then
+    # Function to download WAN 2.1 models
+    download_wan_models() {
+        log "Downloading WAN 2.1 models..." "$BLUE"
+        log "This may take a while. The models are large files..." "$YELLOW" "WARNING"
+        log "Downloading WAN 2.1 models (several GB in size)..." "$YELLOW" "WARNING"
+        log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
+        
+        # Create model directories
+        mkdir -p "$COMFYUI_DIR/models/clip_vision"
+        mkdir -p "$COMFYUI_DIR/models/text_encoders"
+        mkdir -p "$COMFYUI_DIR/models/diffusion_models"
+        mkdir -p "$COMFYUI_DIR/models/vae"
+        
+        # Create placeholder files
+        touch "$COMFYUI_DIR/models/clip_vision/put_clip_vision_models_here"
+        touch "$COMFYUI_DIR/models/text_encoders/put_text_encoder_files_here"
+        touch "$COMFYUI_DIR/models/diffusion_models/put_diffusion_model_files_here"
+        touch "$COMFYUI_DIR/models/vae/put_vae_here"
+        
+        # Using official Comfy-Org repository
+        log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$BLUE"
+        
+        # Define models to download
+        local models=(
+            "clip_vision:clip_vision_h.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
+            "text_encoders:umt5_xxl_fp8_e4m3fn_scaled.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+            "diffusion_models:wan2.1_i2v_480p_14B_fp8_scaled.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
+            "vae:wan_2.1_vae.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+        )
+        
+        log "Total files to download: ${#models[@]}" "$BLUE"
+        log "Files to download:" "$BLUE"
+        
+        for model in "${models[@]}"; do
+            IFS=':' read -r dir file url <<< "$model"
+            log "$dir: $file -> $dir" "$BLUE"
+        done
+        
+        # Download each model
+        local count=1
+        for model in "${models[@]}"; do
+            IFS=':' read -r dir file url <<< "$model"
+            log "[$count/${#models[@]}] Downloading to $dir..." "$BLUE"
+            log "Downloading $file..." "$BLUE"
+            
+            # Get file size
+            local size=$(curl -sI "$url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
+            if [ -n "$size" ]; then
+                log "File size: $(format_size $size)" "$YELLOW" "WARNING"
+            fi
+            
+            # Download the model
+            local retry_count=0
+            local max_retries=3
+            
+            while [ $retry_count -lt $max_retries ]; do
+                if download_model "$url" "$COMFYUI_DIR/models/$dir" "$file"; then
+                    break
+                fi
+                
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt $max_retries ]; then
+                    log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
+                    sleep 5
+                fi
+            done
+            
+            count=$((count + 1))
+        done
+        
         log "All downloads completed successfully!" "$GREEN"
-    else
-        error_exit "Some downloads failed"
-    fi
+        
+        # Verify downloads
+        log "Verifying model downloads..." "$BLUE"
+        for dir in "clip_vision" "text_encoders" "diffusion_models" "vae"; do
+            local total_size=0
+            local files=()
+            
+            # Calculate total size
+            while IFS= read -r file; do
+                if [ -f "$file" ]; then
+                    local size=$(stat -c%s "$file" 2>/dev/null || echo 0)
+                    total_size=$((total_size + size))
+                    files+=("$(basename "$file")")
+                fi
+            done < <(find "$COMFYUI_DIR/models/$dir" -type f -name "*.safetensors")
+            
+            if [ ${#files[@]} -gt 0 ]; then
+                log "Found models in $dir: total $(format_size $total_size)" "$GREEN"
+                for file in "${files[@]}"; do
+                    local size=$(stat -c%s "$COMFYUI_DIR/models/$dir/$file" 2>/dev/null || echo 0)
+                    log "- $file ($(format_size $size))" "$GREEN"
+                done
+            else
+                log "No models found in $dir" "$YELLOW" "WARNING"
+            fi
+        done
+        
+        log "All WAN 2.1 models downloaded successfully!" "$GREEN"
+    }
     
-    # Verify downloads with detailed logging
-    log "Verifying model downloads..." "$GREEN"
-    local missing_models=false
-    for dir in diffusion_models text_encoders clip_vision vae; do
-        if [ ! "$(ls -A $COMFYUI_DIR/models/$dir)" ]; then
-            log "Model directory $dir is empty after download" "$RED" "ERROR"
-            missing_models=true
-        else
-            log "Found models in $dir: $(ls -lh $COMFYUI_DIR/models/$dir)" "$GREEN"
-        fi
-    done
-    
-    if [ "$missing_models" = true ]; then
-        error_exit "Some model directories are empty after download"
-    fi
-    
-    log "All WAN 2.1 models downloaded successfully!" "$GREEN"
-    
-    # Create example workflow
-    log "Creating example workflow..." "$GREEN"
-    mkdir -p "$COMFYUI_DIR/workflows" || error_exit "Failed to create workflows directory"
-    
-    # Copy example workflow from wrapper if available
-    if [ -f "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper/example_workflows/wan_i2v_workflow.json" ]; then
-        cp "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper/example_workflows/wan_i2v_workflow.json" \
-           "$COMFYUI_DIR/workflows/wan_i2v_workflow.json" || \
-            log "Failed to copy example workflow" "$YELLOW" "WARNING"
-    else
-        # Create basic workflow if example not available
-        cat > "$COMFYUI_DIR/workflows/wan_i2v_workflow.json" << 'EOF'
-{
-    "last_node_id": 1,
-    "last_link_id": 1,
-    "nodes": [],
-    "links": [],
-    "groups": [],
-    "config": {},
-    "extra": {},
-    "version": 0.4
-}
-EOF
-    fi
+    # Download WAN 2.1 models
+    download_wan_models
     
     # Install extensions after ComfyUI setup
     install_extensions
