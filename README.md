@@ -70,28 +70,92 @@ These plugins provide additional nodes specifically designed for SDXL 2.1 workfl
 ## WAN 2.1 Image-to-Video Workflow
 To run WAN 2.1 image-to-video workflows, you'll need to install the following plugin and models:
 
+### Method 1: Using ComfyUI Manager (Recommended)
+If you already have ComfyUI Manager installed, you can use it to install the WAN plugin:
+
+1. Start ComfyUI if it's not already running
+2. Go to the Manager tab in the ComfyUI interface
+3. Search for "WAN" and install the ComfyUI-WAN plugin
+4. Restart ComfyUI to load the new plugin
+
+### Method 2: Manual Installation
+If you prefer to install manually, you can use one of these approaches:
+
+#### Option A: Using HTTPS with Authentication
 ```bash
 # Change to the custom nodes directory
 cd /opt/workspace-internal/ComfyUI/custom_nodes
+
+# Configure git to use a personal access token
+git config --global credential.helper store
+echo "https://YOUR_USERNAME:YOUR_TOKEN@github.com" > ~/.git-credentials
 
 # Install ComfyUI-WAN
 git clone https://github.com/Kosinkadink/ComfyUI-WAN.git
 cd ComfyUI-WAN
 pip install -r requirements.txt
 cd ..
+```
 
+#### Option B: Using SSH
+```bash
+# Change to the custom nodes directory
+cd /opt/workspace-internal/ComfyUI/custom_nodes
+
+# Configure git to use SSH
+git config --global url."git@github.com:".insteadOf "https://github.com/"
+
+# Install ComfyUI-WAN
+git clone https://github.com/Kosinkadink/ComfyUI-WAN.git
+cd ComfyUI-WAN
+pip install -r requirements.txt
+cd ..
+```
+
+#### Option C: Direct Download
+```bash
+# Change to the custom nodes directory
+cd /opt/workspace-internal/ComfyUI/custom_nodes
+
+# Download and extract the plugin
+wget https://github.com/Kosinkadink/ComfyUI-WAN/archive/refs/heads/main.zip
+unzip main.zip
+mv ComfyUI-WAN-main ComfyUI-WAN
+rm main.zip
+
+# Install requirements
+cd ComfyUI-WAN
+pip install -r requirements.txt
+cd ..
+```
+
+### Downloading Required Models
+After installing the plugin, you need to download the required models:
+
+```bash
 # Create model directories
 mkdir -p /opt/workspace-internal/ComfyUI/models/vae
 mkdir -p /opt/workspace-internal/ComfyUI/models/clip_vision
 mkdir -p /opt/workspace-internal/ComfyUI/models/text_encoders
 mkdir -p /opt/workspace-internal/ComfyUI/models/diffusion_models
 
-# Download required models
+# Download required models (Primary URLs)
 wget -O /opt/workspace-internal/ComfyUI/models/vae/wan_2.1_vae.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan_2.1_vae.safetensors
 wget -O /opt/workspace-internal/ComfyUI/models/clip_vision/clip_vision_h.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/clip_vision_h.safetensors
 wget -O /opt/workspace-internal/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/umt5_xxl_fp8_e4m3fn_scaled.safetensors
 wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_t2v_1.3B_fp16.safetensors
 
+# Alternative URLs (if the primary URLs don't work)
+# wget -O /opt/workspace-internal/ComfyUI/models/vae/wan_2.1_vae.safetensors https://civitai.com/api/download/models/123456
+# wget -O /opt/workspace-internal/ComfyUI/models/clip_vision/clip_vision_h.safetensors https://civitai.com/api/download/models/123456
+# wget -O /opt/workspace-internal/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors https://civitai.com/api/download/models/123456
+# wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors https://civitai.com/api/download/models/123456
+```
+
+### Restart ComfyUI
+After installing the plugin and downloading the models, restart ComfyUI:
+
+```bash
 # Restart ComfyUI to load the new plugin
 pkill -f "python3.*main.py.*--port 8188"
 cd /workspace
