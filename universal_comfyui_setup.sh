@@ -1717,12 +1717,17 @@ verify_model_file() {
     
     # If stat failed, try wc -c
     if [ "$file_size" = "0" ] && command -v wc &> /dev/null; then
+        file_size=$(wc -c < "$file_path" 2>/dev/null || echo "0")
+    fi
+    
+    # Convert to integer to ensure valid comparison
+    file_size=$(printf '%d' "$file_size" 2>/dev/null || echo "0")
+    
+    # Check if file is empty
+    if [ "$file_size" = "0" ]; then
         log "❌ File $model_name is empty" "$RED" "ERROR"
         return 1
     fi
-    
-    # Check file type safely without using the 'file' command
-    # This ensures we don't have issues with the 'file' command not being available
     
     # For files over 1MB, we'll consider them valid for our purposes
     if [ "$file_size" -gt 1048576 ]; then
@@ -1730,15 +1735,26 @@ verify_model_file() {
         is_valid=true
     else
         # For smaller files, check if the size is close to expected
-        local size_diff=$((file_size - expected_size))
-        # Take absolute value
-        size_diff=${size_diff#-}
-        
-        if [ "$size_diff" -le 51200 ]; then  # Within 50KB
-            log "✅ $model_name size ($(format_size "$file_size")) is close to expected size ($(format_size "$expected_size"))" "$GREEN"
-            is_valid=true
+        local size_diff=0
+        if [ -n "$expected_size" ]; then
+            size_diff=$((file_size - expected_size))
+            # Take absolute value
+            size_diff=${size_diff#-}
+            
+            if [ "$size_diff" -le 51200 ]; then  # Within 50KB
+                log "✅ $model_name size ($(format_size "$file_size")) is close to expected size ($(format_size "$expected_size"))" "$GREEN"
+                is_valid=true
+            else
+                log "❌ $model_name size ($(format_size "$file_size")) differs significantly from expected ($(format_size "$expected_size"))" "$RED" "ERROR"
+            fi
         else
-            log "❌ $model_name size ($(format_size "$file_size")) differs significantly from expected ($(format_size "$expected_size"))" "$RED" "ERROR"
+            # If no expected size provided, just check if file is not empty
+            if [ "$file_size" -gt 0 ]; then
+                log "✅ $model_name has valid size ($(format_size "$file_size"))" "$GREEN"
+                is_valid=true
+            else
+                log "❌ $model_name has invalid size" "$RED" "ERROR"
+            fi
         fi
     fi
     
