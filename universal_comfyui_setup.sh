@@ -855,7 +855,7 @@ display_summary() {
         local model_name="${expected_models[$model_path]}"
         
         if [ -f "$target_path" ]; then
-            local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+            local size=$(get_file_size "$target_path")
             if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
                 local formatted_size=$(format_size $size)
                 if [ -f "$metadata_path" ]; then
@@ -1072,6 +1072,30 @@ manage_metadata() {
     esac
 }
 
+# Function to get file size in a portable way
+get_file_size() {
+    local file="$1"
+    local size=0
+    
+    # Try different methods to get file size
+    if command -v stat &> /dev/null; then
+        # Try BSD stat first
+        size=$(stat -f %z "$file" 2>/dev/null || echo "0")
+        # If that failed, try GNU stat
+        if [ "$size" = "0" ]; then
+            size=$(stat -c %s "$file" 2>/dev/null || echo "0")
+        fi
+    fi
+    
+    # If stat failed, try wc -c
+    if [ "$size" = "0" ] && command -v wc &> /dev/null; then
+        size=$(wc -c < "$file" 2>/dev/null || echo "0")
+    fi
+    
+    # If all methods failed, return 0
+    echo "$size"
+}
+
 # Function to format size in human-readable format
 format_size() {
     local size="${1:-0}"  # Default to 0 if no argument provided
@@ -1079,20 +1103,23 @@ format_size() {
     local mb=0
     local kb=0
     
+    # Convert to integer and handle invalid input
+    size=$(printf '%d' "$size" 2>/dev/null || echo "0")
+    
     if [ "$size" -gt 0 ]; then
         gb=$((size / 1073741824))
         mb=$((size / 1048576))
         kb=$((size / 1024))
         
         if [ "$gb" -gt 0 ]; then
-            echo "$gb GB"
+            printf "%d GB" "$gb"
         elif [ "$mb" -gt 0 ]; then
-            echo "$mb MB"
+            printf "%d MB" "$mb"
         else
-            echo "$kb KB"
+            printf "%d KB" "$kb"
         fi
     else
-        echo "0 KB"
+        printf "0 KB"
     fi
 }
 
@@ -1132,7 +1159,7 @@ download_model() {
     
     # If file exists but metadata doesn't match, verify it
     if [ -f "$output_path" ]; then
-        actual_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null || echo "0")
+        actual_size=$(get_file_size "$output_path")
         if [ "$actual_size" = "$expected_size" ]; then
             # File size matches, update metadata
             manage_metadata "update" "$output_path" "$expected_size"
@@ -1149,7 +1176,7 @@ download_model() {
     
     log "Downloading $model_name..." "$BLUE"
     if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$temp_file"; then
-        downloaded_size=$(stat -f %z "$temp_file" 2>/dev/null || stat -c %s "$temp_file" 2>/dev/null || echo "0")
+        downloaded_size=$(get_file_size "$temp_file")
         # Allow for small size differences (up to 1MB) due to filesystem differences
         size_diff=$((downloaded_size - expected_size))
         if [ ${size_diff#-} -le 1048576 ] || [ "$downloaded_size" = "$expected_size" ]; then
