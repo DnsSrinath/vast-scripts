@@ -105,7 +105,7 @@ fi
 
 # Start ComfyUI
 cd /workspace/ComfyUI
-./start_comfyui.sh
+python3 main.py --listen 0.0.0.0 --port 8188
 EOF
 
 chmod +x /workspace/container_startup.sh
@@ -121,7 +121,18 @@ fi
 
 # Start ComfyUI in background mode
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ComfyUI in background mode..."
-cd /workspace/ComfyUI
+cd /workspace/ComfyUI || {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Error: ComfyUI directory not found at /workspace/ComfyUI"
+    exit 1
+}
+
+# Check if main.py exists
+if [ ! -f "main.py" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Error: main.py not found in ComfyUI directory"
+    exit 1
+fi
+
+# Start ComfyUI
 nohup python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
 
 # Wait for ComfyUI to start
@@ -135,5 +146,6 @@ if is_process_running "python3.*main.py"; then
     touch /workspace/.comfyui_started
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Failed to start ComfyUI!"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Check /workspace/ComfyUI/comfyui.log for details"
     exit 1
 fi
