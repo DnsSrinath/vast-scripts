@@ -513,8 +513,12 @@ main() {
     mkdir -p "$COMFYUI_DIR/models/"{diffusion_models,text_encoders,clip_vision,vae} || \
         error_exit "Failed to create model directories"
     
-    # Download models using direct wget/curl
+    # Download WAN 2.1 models
     log "Downloading WAN 2.1 models..." "$GREEN"
+    log "This may take a while. The models are large files..." "$YELLOW" "WARNING"
+    log "Downloading WAN 2.1 models (several GB in size)..." "$YELLOW" "WARNING"
+    log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
+    log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$GREEN"
     
     # Function to format size
     format_size() {
