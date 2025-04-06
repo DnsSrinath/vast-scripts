@@ -167,9 +167,6 @@ prepare_system() {
         log "⚠️ Low disk space: ${available_space}MB available. Recommended: 20GB+" "$YELLOW" "WARNING"
     fi
     
-    # Skip any package installation that requires apt - it's causing problems with NVIDIA
-    log "Skipping system package installation (avoiding NVIDIA dependency issues)" "$YELLOW"
-    
     # Check Python is available
     if ! command -v python3 &> /dev/null; then
         log "Python3 not found! This is critical." "$RED" "ERROR"
@@ -238,10 +235,7 @@ check_cuda() {
     # Explicitly set CPU mode
     export CUDA_VISIBLE_DEVICES=""
     
-    log "CUDA checks bypassed, running in CPU-only mode" "$YELLOW" "WARNING"
-    
-    # Add a note to the status display
-    log "⚠️ NVIDIA driver issues detected - using CPU mode for stability" "$YELLOW" "WARNING"
+    log "Running in CPU-only mode" "$YELLOW"
     
     return 1  # Return 1 to indicate not using CUDA
 }
@@ -506,38 +500,6 @@ download_wan_models() {
     fi
 }
 
-# Download all WAN 2.1 models
-download_wan_models() {
-    log "Downloading WAN 2.1 models..." "$BLUE"
-    log "This may take a while. Estimated download size: ~20GB" "$YELLOW"
-    
-    local total_models=${#MODELS[@]}
-    local success_count=0
-    local failed_count=0
-    local current=0
-    
-    for model_path in "${!MODELS[@]}"; do
-        current=$((current + 1))
-        log "[$current/$total_models] Processing $model_path" "$BLUE"
-        
-        if download_model "$model_path"; then
-            success_count=$((success_count + 1))
-        else
-            failed_count=$((failed_count + 1))
-        fi
-    done
-    
-    log "Model download summary: $success_count succeeded, $failed_count failed" "$BLUE"
-    
-    if [ $failed_count -gt 0 ]; then
-        log "⚠️ Some models failed to download, check log for details" "$YELLOW" "WARNING"
-        return 1
-    else
-        log "✅ All models downloaded successfully" "$GREEN"
-        return 0
-    fi
-}
-
 # Install a single ComfyUI extension
 install_extension() {
     local ext_name="$1"
@@ -656,7 +618,7 @@ fi
 echo "Starting ComfyUI in CPU mode..."
 cd /workspace/ComfyUI
 export CUDA_VISIBLE_DEVICES=""
-PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 --cpu > comfyui.log 2>&1 &
+python3 main.py --listen 0.0.0.0 --port 8188 --cpu > comfyui.log 2>&1 &
 
 # Wait for ComfyUI to start
 sleep 5
@@ -703,7 +665,7 @@ display_summary() {
     # System information
     log "System Information:" "$GREEN"
     log "  - Python Version: $(python3 --version 2>&1)" "$GREEN"
-    log "  - Mode: CPU-only (NVIDIA drivers disabled)" "$YELLOW"
+    log "  - Mode: CPU-only" "$GREEN"
     
     # ComfyUI installation
     log "ComfyUI Installation:" "$GREEN"
@@ -766,7 +728,6 @@ init_status_tracking() {
         cat > "$STATUS_FILE" << EOF
 {
     "system_prepared": false,
-    "cuda_checked": false,
     "comfyui_installed": false,
     "models_downloaded": {
         "clip_vision/clip_vision_h.safetensors": false,
@@ -941,26 +902,21 @@ main() {
         log "✓ System already prepared, skipping Step 1" "$GREEN"
     fi
     
-    # Step 2: CUDA Check
-    if [ "$(get_status "cuda_checked" "false")" = "false" ]; then
-        log "Step 2: CUDA Compatibility Check" "$BLUE"
-        check_cuda
-        update_status "cuda_checked" "true"
-    else
-        log "✓ CUDA already checked, skipping Step 2" "$GREEN"
-    fi
+    # Set CPU mode explicitly
+    export CUDA_VISIBLE_DEVICES=""
+    log "Running in CPU-only mode" "$YELLOW"
     
     # Step 3: ComfyUI Installation
     if [ "$(get_status "comfyui_installed" "false")" = "false" ]; then
-        log "Step 3: ComfyUI Installation" "$BLUE"
+        log "Step 2: ComfyUI Installation" "$BLUE"
         install_comfyui
         update_status "comfyui_installed" "true"
     else
-        log "✓ ComfyUI already installed, skipping Step 3" "$GREEN"
+        log "✓ ComfyUI already installed, skipping Step 2" "$GREEN"
     fi
     
     # Step 4: Model Downloads
-    log "Step 4: Model Downloads" "$BLUE"
+    log "Step 3: Model Downloads" "$BLUE"
     local all_models_downloaded=true
     
     for model_path in "${!MODELS[@]}"; do
@@ -997,7 +953,7 @@ main() {
     fi
     
     # Step 5: Extensions Installation
-    log "Step 5: Extensions Installation" "$BLUE"
+    log "Step 4: Extensions Installation" "$BLUE"
     local all_extensions_installed=true
     
     for ext_name in "${!EXTENSIONS[@]}"; do
@@ -1030,11 +986,11 @@ main() {
     
     # Step 6: Final Setup
     if [ "$(get_status "startup_scripts_created" "false")" = "false" ]; then
-        log "Step 6: Final Setup" "$BLUE"
+        log "Step 5: Final Setup" "$BLUE"
         create_startup_scripts
         update_status "startup_scripts_created" "true"
     else
-        log "✓ Startup scripts already created, skipping Step 6" "$GREEN"
+        log "✓ Startup scripts already created, skipping Step 5" "$GREEN"
     fi
     
     # Mark installation as completed
