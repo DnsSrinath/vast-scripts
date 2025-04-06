@@ -426,48 +426,90 @@ check_system_compatibility() {
     log "System compatibility check passed!" "$GREEN"
 }
 
+# Function to clone repository with direct download
+clone_repo() {
+    local repo_url="$1"
+    local target_dir="$2"
+    local max_retries=3
+    local retry_count=0
+    
+    # Extract repository name from URL
+    local repo_name=$(basename "$repo_url")
+    
+    while [ $retry_count -lt $max_retries ]; do
+        # Create target directory
+        mkdir -p "$target_dir"
+        
+        # Download repository as zip
+        local zip_url="${repo_url}/archive/refs/heads/main.zip"
+        local temp_zip="${TEMP_DIR}/${repo_name}.zip"
+        
+        log "Downloading repository from ${zip_url}..." "$BLUE"
+        
+        if command -v wget &> /dev/null; then
+            wget --progress=bar:force:noscroll \
+                 --no-check-certificate \
+                 --retry-connrefused \
+                 --retry-on-http-error=503 \
+                 --tries=5 \
+                 --continue \
+                 --timeout=60 \
+                 --waitretry=30 \
+                 -O "$temp_zip" "$zip_url" 2>&1
+        else
+            curl -L \
+                 --retry 5 \
+                 --retry-delay 30 \
+                 --retry-max-time 3600 \
+                 --continue-at - \
+                 -o "$temp_zip" "$zip_url" 2>&1
+        fi
+        
+        if [ $? -eq 0 ] && [ -f "$temp_zip" ]; then
+            # Extract zip file
+            unzip -q -o "$temp_zip" -d "$TEMP_DIR"
+            
+            # Move contents to target directory
+            mv "$TEMP_DIR/${repo_name}-main/"* "$target_dir/" 2>/dev/null || \
+                mv "$TEMP_DIR/${repo_name}-master/"* "$target_dir/" 2>/dev/null
+            
+            # Clean up
+            rm -f "$temp_zip"
+            rm -rf "$TEMP_DIR/${repo_name}-main" "$TEMP_DIR/${repo_name}-master"
+            
+            return 0
+        fi
+        
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $max_retries ]; then
+            log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
+            sleep 5
+        fi
+    done
+    
+    return 1
+}
+
 # Function to install ComfyUI extensions
 install_extensions() {
     log "Installing ComfyUI extensions..." "$GREEN"
     
-    # Create custom nodes directory
-    mkdir -p "$COMFYUI_DIR/custom_nodes" || error_exit "Failed to create custom_nodes directory"
-    
-    # Define extensions to install
-    declare -A extensions=(
-        ["ComfyUI-Impact-Pack"]="https://github.com/ltdrdata/ComfyUI-Impact-Pack"
-        ["ComfyUI-Advanced-ControlNet"]="https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet"
-        ["ComfyUI-Image-Selector"]="https://github.com/space-nuko/ComfyUI-Image-Selector"
-        ["ComfyUI-InstantID"]="https://github.com/cubiq/ComfyUI-InstantID"
-        ["ComfyUI-IPAdapter-Plus"]="https://github.com/laksjdjf/ComfyUI-IPAdapter-Plus"
+    # List of extensions to install
+    local extensions=(
+        "Kosinkadink/ComfyUI-Advanced-ControlNet"
+        "cubiq/ComfyUI-InstantID"
     )
     
-    # Install each extension
-    for name in "${!extensions[@]}"; do
-        local repo_url="${extensions[$name]}"
-        log "Installing extension: $name" "$BLUE"
+    for ext in "${extensions[@]}"; do
+        local ext_name=$(basename "$ext")
+        log "Installing extension: $ext_name" "$BLUE"
         
-        # Skip if already installed
-        if [ -d "$COMFYUI_DIR/custom_nodes/$name" ]; then
-            log "$name is already installed" "$GREEN"
-            continue
-        fi
-        
-        # Try git clone
-        if ! run_command "git clone --depth 1 \"$repo_url\" \"$COMFYUI_DIR/custom_nodes/$name\"" "Failed to clone $name"; then
-            log "Failed to install $name" "$YELLOW" "WARNING"
-            continue
-        fi
-        
-        # Install Python dependencies if requirements.txt exists
-        if [ -f "$COMFYUI_DIR/custom_nodes/$name/requirements.txt" ]; then
-            log "Installing dependencies for $name..." "$BLUE"
-            run_command "pip install -r \"$COMFYUI_DIR/custom_nodes/$name/requirements.txt\"" "Failed to install dependencies for $name" || \
-                log "Some dependencies for $name failed to install" "$YELLOW" "WARNING"
+        if clone_repo "https://github.com/$ext" "$COMFYUI_DIR/custom_nodes/$ext_name"; then
+            log "✅ Successfully installed $ext_name" "$GREEN"
+        else
+            log "❌ Failed to install $ext_name" "$RED" "ERROR"
         fi
     done
-    
-    log "Extension installation completed" "$GREEN"
 }
 
 # Create a startup script with CUDA initialization
@@ -556,16 +598,30 @@ main() {
     log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
     log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$GREEN"
     
-    # Function to format size
+    # Function to format size without bc
     format_size() {
         local size=$1
         if [ $size -ge 1073741824 ]; then
-            echo "$(echo "scale=2; $size/1073741824" | bc) GB"
+            printf "%.2f GB" "$(awk "BEGIN {printf \"%.2f\", $size/1073741824}")"
         elif [ $size -ge 1048576 ]; then
-            echo "$(echo "scale=2; $size/1048576" | bc) MB"
+            printf "%.2f MB" "$(awk "BEGIN {printf \"%.2f\", $size/1048576}")"
         else
-            echo "$(echo "scale=2; $size/1024" | bc) KB"
+            printf "%.2f KB" "$(awk "BEGIN {printf \"%.2f\", $size/1024}")"
         fi
+    }
+    
+    # Function to check if model exists and is valid
+    check_model_exists() {
+        local model_path="$1"
+        local expected_size="$2"
+        
+        if [ -f "$model_path" ]; then
+            local actual_size=$(stat -f %z "$model_path" 2>/dev/null || stat -c %s "$model_path" 2>/dev/null)
+            if [ -n "$actual_size" ] && [ -n "$expected_size" ] && [ "$actual_size" = "$expected_size" ]; then
+                return 0
+            fi
+        fi
+        return 1
     }
     
     # Function to download with progress
@@ -575,13 +631,21 @@ main() {
         local filename=$(basename "$output")
         local dir=$(dirname "$output")
         
+        # Check if model already exists with correct size
+        local size=$(curl -sI "$url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
+        if [ ! -z "$size" ]; then
+            if check_model_exists "$output" "$size"; then
+                log "✅ Model ${filename} already exists with correct size ($(format_size $size))" "$GREEN"
+                return 0
+            fi
+        fi
+        
         log "Downloading ${filename}..." "$BLUE"
         
         # Create directory if it doesn't exist
         mkdir -p "$dir"
         
         # Get file size first
-        local size=$(curl -sI "$url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
         if [ ! -z "$size" ]; then
             log "File size: $(format_size $size)" "$YELLOW"
         fi
