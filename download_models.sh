@@ -71,3 +71,63 @@ fi
 # Print total downloaded size
 echo -e "${YELLOW}Total approximate download size: 37 GB${NC}"
 echo -e "${YELLOW}Make sure you have sufficient disk space.${NC}"
+
+
+
+#!/bin/bash
+
+# Set colors for output
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Docker ComfyUI custom nodes directory
+COMFYUI_CUSTOM_NODES="/content/ComfyUI/custom_nodes"
+
+# Function to check if inside a Docker container
+check_docker() {
+    if [ ! -f /.dockerenv ]; then
+        echo -e "${YELLOW}Warning: Not running inside a Docker container. Proceed with caution.${NC}"
+    fi
+}
+
+# Install ComfyUI Manager
+install_comfyui_manager() {
+    echo -e "${YELLOW}Installing ComfyUI Manager...${NC}"
+    
+    # Ensure custom nodes directory exists
+    mkdir -p "$COMFYUI_CUSTOM_NODES"
+    cd "$COMFYUI_CUSTOM_NODES" || exit 1
+
+    # Clone ComfyUI Manager repository
+    if [ ! -d "ComfyUI-Manager" ]; then
+        git clone https://github.com/ltdrdata/ComfyUI-Manager.git
+        cd ComfyUI-Manager || exit 1
+    else
+        cd ComfyUI-Manager
+        git pull
+    fi
+
+    # Install dependencies (for Docker Python environment)
+    pip install -r requirements.txt
+
+    echo -e "${GREEN}ComfyUI Manager installed successfully!${NC}"
+}
+
+# Main installation process
+main() {
+    # Check Docker context
+    check_docker
+
+    # Install ComfyUI Manager
+    install_comfyui_manager
+
+    # Print completion message
+    echo -e "\n${GREEN}ComfyUI Manager Installation Complete!${NC}"
+    echo -e "${YELLOW}Restart your Docker container or ComfyUI to see the changes.${NC}"
+    echo -e "Manager will be available in the ComfyUI interface under the 'Manager' tab."
+}
+
+# Run the main function
+main
