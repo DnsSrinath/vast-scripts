@@ -169,24 +169,83 @@ mkdir -p /opt/workspace-internal/ComfyUI/models/vae
 mkdir -p /opt/workspace-internal/ComfyUI/models/clip_vision
 mkdir -p /opt/workspace-internal/ComfyUI/models/text_encoders
 mkdir -p /opt/workspace-internal/ComfyUI/models/diffusion_models
+```
 
-# Download required models (Primary URLs)
-wget -O /opt/workspace-internal/ComfyUI/models/vae/wan_2.1_vae.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan_2.1_vae.safetensors
-wget -O /opt/workspace-internal/ComfyUI/models/clip_vision/clip_vision_h.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/clip_vision_h.safetensors
-wget -O /opt/workspace-internal/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+#### Method 1: Using Hugging Face with Authentication
+If you have a Hugging Face account, you can authenticate and download the models:
+
+```bash
+# Install the Hugging Face Hub library
+pip install huggingface_hub
+
+# Login to Hugging Face (you'll be prompted for your token)
+huggingface-cli login
+
+# Download the models
+huggingface-cli download Kosinkadink/wan wan_2.1_vae.safetensors --local-dir /opt/workspace-internal/ComfyUI/models/vae
+huggingface-cli download Kosinkadink/wan clip_vision_h.safetensors --local-dir /opt/workspace-internal/ComfyUI/models/clip_vision
+huggingface-cli download Kosinkadink/wan umt5_xxl_fp8_e4m3fn_scaled.safetensors --local-dir /opt/workspace-internal/ComfyUI/models/text_encoders
 
 # Download one of the diffusion models based on your needs:
 # For Text-to-video 1.3B (480P) - Requires only 8.19 GB VRAM
-wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_t2v_1.3B_fp16.safetensors
+huggingface-cli download Kosinkadink/wan wan2.1_t2v_1.3B_fp16.safetensors --local-dir /opt/workspace-internal/ComfyUI/models/diffusion_models
 
 # For Image-to-video 14B 480P
-# wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_i2v_14B_480P_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_i2v_14B_480P_fp16.safetensors
+# huggingface-cli download Kosinkadink/wan wan2.1_i2v_14B_480P_fp16.safetensors --local-dir /opt/workspace-internal/ComfyUI/models/diffusion_models
 
 # For Image-to-video 14B 720P
-# wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_i2v_14B_720P_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_i2v_14B_720P_fp16.safetensors
+# huggingface-cli download Kosinkadink/wan wan2.1_i2v_14B_720P_fp16.safetensors --local-dir /opt/workspace-internal/ComfyUI/models/diffusion_models
 
 # For Text-to-video 14B
-# wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_14B_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_t2v_14B_fp16.safetensors
+# huggingface-cli download Kosinkadink/wan wan2.1_t2v_14B_fp16.safetensors --local-dir /opt/workspace-internal/ComfyUI/models/diffusion_models
+```
+
+#### Method 2: Using Direct Download with Authentication
+If you prefer using wget, you can include your Hugging Face token:
+
+```bash
+# Set your Hugging Face token
+export HF_TOKEN="your_huggingface_token_here"
+
+# Download the models with authentication
+wget --header="Authorization: Bearer $HF_TOKEN" -O /opt/workspace-internal/ComfyUI/models/vae/wan_2.1_vae.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan_2.1_vae.safetensors
+wget --header="Authorization: Bearer $HF_TOKEN" -O /opt/workspace-internal/ComfyUI/models/clip_vision/clip_vision_h.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/clip_vision_h.safetensors
+wget --header="Authorization: Bearer $HF_TOKEN" -O /opt/workspace-internal/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+wget --header="Authorization: Bearer $HF_TOKEN" -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_t2v_1.3B_fp16.safetensors
+```
+
+#### Method 3: Using ComfyUI Manager
+If you've installed the plugin using ComfyUI Manager, you can also use it to download the models:
+
+1. Start ComfyUI
+2. Go to the Manager tab
+3. Click on "Download Models"
+4. Search for "WAN" and download the required models
+
+#### Method 4: Manual Download and Upload
+If you have the models on your local machine, you can upload them to the instance:
+
+```bash
+# From your local machine
+scp /path/to/wan_2.1_vae.safetensors user@your-instance-ip:/opt/workspace-internal/ComfyUI/models/vae/
+scp /path/to/clip_vision_h.safetensors user@your-instance-ip:/opt/workspace-internal/ComfyUI/models/clip_vision/
+scp /path/to/umt5_xxl_fp8_e4m3fn_scaled.safetensors user@your-instance-ip:/opt/workspace-internal/ComfyUI/models/text_encoders/
+scp /path/to/wan2.1_t2v_1.3B_fp16.safetensors user@your-instance-ip:/opt/workspace-internal/ComfyUI/models/diffusion_models/
+```
+
+#### Method 5: Using Alternative Sources
+You can also find the models on alternative platforms:
+
+```bash
+# Download from Civitai (requires authentication)
+# First, get your Civitai API key from https://civitai.com/settings/account
+export CIVITAI_API_KEY="your_civitai_api_key_here"
+
+# Then download the models
+curl -H "Authorization: Bearer $CIVITAI_API_KEY" -L "https://civitai.com/api/download/models/123456" -o /opt/workspace-internal/ComfyUI/models/vae/wan_2.1_vae.safetensors
+curl -H "Authorization: Bearer $CIVITAI_API_KEY" -L "https://civitai.com/api/download/models/123456" -o /opt/workspace-internal/ComfyUI/models/clip_vision/clip_vision_h.safetensors
+curl -H "Authorization: Bearer $CIVITAI_API_KEY" -L "https://civitai.com/api/download/models/123456" -o /opt/workspace-internal/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+curl -H "Authorization: Bearer $CIVITAI_API_KEY" -L "https://civitai.com/api/download/models/123456" -o /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors
 ```
 
 ### Restart ComfyUI
