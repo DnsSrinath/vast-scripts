@@ -2,131 +2,114 @@
 # Robust ComfyUI Startup Script for Vast.ai Docker Environments
 # https://github.com/DnsSrinath/vast-scripts
 
-# Logging function
-log() {
-    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    echo "[${timestamp}] $1" | tee -a /workspace/comfyui_startup.log
+# Set up logging
+LOG_FILE="comfyui_startup.log"
+exec 1> >(tee -a "$LOG_FILE")
+exec 2>&1
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ComfyUI startup script..."
+
+# Function to check if a process is running
+is_process_running() {
+    pgrep -f "$1" > /dev/null
 }
 
-# Error handling function
-error_exit() {
-    log "ERROR: $1"
-    exit 1
+# Function to terminate a process
+terminate_process() {
+    local pid=$(pgrep -f "$1")
+    if [ ! -z "$pid" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Terminating $1 (PID: $pid)..."
+        kill -15 $pid
+        sleep 2
+        if is_process_running "$1"; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Force killing $1..."
+            kill -9 $pid
+        fi
+    fi
 }
 
-# Ensure we're in the correct directory
-cd /workspace/ComfyUI || error_exit "Cannot change to ComfyUI directory"
-
-# Log script start
-log "Starting ComfyUI startup script..."
-
-# Detect GPU availability
+# Check for NVIDIA GPU
 if command -v nvidia-smi &> /dev/null; then
-    log "NVIDIA GPU detected"
-    # Log GPU information
-    nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] NVIDIA GPU detected"
+    
+    # Set CUDA environment variables
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+    export PATH=$CUDA_HOME/bin:$PATH
+    
+    # Check CUDA driver version
+    CUDA_DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA Driver Version: $CUDA_DRIVER_VERSION"
+    
+    # Install CUDA toolkit if needed
+    if ! command -v nvcc &> /dev/null; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing CUDA toolkit..."
+        apt-get update && apt-get install -y cuda-toolkit-12-0 || \
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA toolkit installation failed, continuing..." >&2
+    fi
+    
+    # Install PyTorch with CUDA support if needed
+    if ! python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing PyTorch with CUDA support..."
+        pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 || \
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] PyTorch CUDA installation failed" >&2
+    fi
 else
-    log "No NVIDIA GPU detected. Running in CPU mode."
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] No NVIDIA GPU detected, running in CPU mode" >&2
 fi
 
-# Kill any existing ComfyUI processes
-log "Checking and terminating existing ComfyUI processes..."
-pkill -f "python.*main.py" || true
+# Check and terminate existing ComfyUI processes
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking and terminating existing ComfyUI processes..."
+terminate_process "python3.*main.py"
+terminate_process "python.*main.py"
+
+# Wait for processes to fully terminate
 sleep 3
 
 # Prepare startup configuration
-log "Preparing ComfyUI startup configuration..."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Preparing ComfyUI startup configuration..."
 
-# Create extra arguments file
-echo "--listen 0.0.0.0 --port 8188 --enable-cors-header" > /workspace/ComfyUI/extra_args.txt
-chmod 755 /workspace/ComfyUI/extra_args.txt
+# Check dependencies
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking dependencies..."
+python3 -c "import torch; import torchvision; import torchaudio" 2>/dev/null || {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing PyTorch dependencies..."
+    pip3 install torch torchvision torchaudio
+}
 
-# Install or check dependencies
-log "Checking dependencies..."
-python3 -m pip install torch torchvision torchaudio xformers --quiet || \
-    log "Warning: Some dependencies could not be installed, but ComfyUI may still work."
-
-# Create persistent startup script if it doesn't exist
-if [ ! -f "/workspace/comfyui_persistent_start.sh" ]; then
-    log "Creating persistent startup script..."
-    cat > /workspace/comfyui_persistent_start.sh << 'EOL'
+# Create persistent startup script
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Creating persistent startup script..."
+cat > start_comfyui_persistent.sh << 'EOF'
 #!/bin/bash
-# Persistent ComfyUI Startup Script for Docker Environments
 
-# Logging function
-log() {
-    local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    local message="[${timestamp}] $1"
-    echo "$message" >> /workspace/comfyui_persistent.log
-    echo "$message"
+# Set CUDA environment variables
+export CUDA_HOME=/usr/local/cuda
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+export PATH=$CUDA_HOME/bin:$PATH
+
+# Initialize CUDA
+python3 -c "import torch; torch.cuda.init()" || {
+    echo "Failed to initialize CUDA"
+    exit 1
 }
 
-# Main function to start ComfyUI
-start_comfyui() {
-    cd /workspace/ComfyUI || {
-        log "ERROR: ComfyUI directory not found"
-        return 1
-    }
-    
-    # Kill any existing ComfyUI processes
-    pkill -f "python.*main.py" || true
-    sleep 2
-    
-    # Start ComfyUI
-    log "Starting ComfyUI..."
-    nohup python3 main.py --listen 0.0.0.0 --port 8188 --enable-cors-header > /workspace/comfyui_output.log 2>&1 &
-    
-    # Check if process started successfully
-    sleep 5
-    if pgrep -f "python.*main.py" > /dev/null; then
-        log "ComfyUI started successfully"
-        log "ComfyUI is accessible at: http://$(hostname -I | awk '{print $1}'):8188"
-        return 0
-    else
-        log "ERROR: Failed to start ComfyUI"
-        return 1
-    }
-}
+# Start ComfyUI
+cd "$(dirname "$0")"
+python3 main.py --listen 0.0.0.0 --port 8188
+EOF
 
-# Monitor and restart if necessary
-monitor_and_restart() {
-    while true; do
-        if ! pgrep -f "python.*main.py" > /dev/null; then
-            log "ComfyUI is not running. Attempting to restart..."
-            start_comfyui
-        fi
-        sleep 60
-    done
-}
+chmod +x start_comfyui_persistent.sh
 
-# Start ComfyUI initially
-start_comfyui
+# Start ComfyUI in foreground mode
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ComfyUI in foreground mode..."
 
-# Start the monitoring loop
-monitor_and_restart
-EOL
-    chmod +x /workspace/comfyui_persistent_start.sh
-fi
+# Get container IP
+CONTAINER_IP=$(hostname -i)
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Access ComfyUI at: http://${CONTAINER_IP}:8188"
 
-# Choose startup mode based on argument
-if [ "$1" == "background" ]; then
-    # Start in background mode with monitoring
-    log "Starting ComfyUI in background mode with automatic monitoring..."
-    nohup /workspace/comfyui_persistent_start.sh > /workspace/comfyui_wrapper.log 2>&1 &
-    
-    # Wait a moment and check if it started
-    sleep 5
-    if pgrep -f "python.*main.py" > /dev/null; then
-        log "ComfyUI started successfully in background mode"
-        log "Access ComfyUI at: http://$(hostname -I | awk '{print $1}'):8188"
-        log "View logs with: tail -f /workspace/comfyui_output.log"
-    else
-        log "WARNING: ComfyUI may have failed to start. Check logs."
-        log "View logs with: tail -f /workspace/comfyui_wrapper.log"
-    fi
-else
-    # Start in foreground mode
-    log "Starting ComfyUI in foreground mode..."
-    log "Access ComfyUI at: http://$(hostname -I | awk '{print $1}'):8188"
-    python3 main.py --listen 0.0.0.0 --port 8188 --enable-cors-header
-fi
+# Set environment variables for safe model loading
+export COMFYUI_SAFE_LOAD=1
+export COMFYUI_CHECKPOINT_SAFE_LOAD=1
+echo "Checkpoint files will always be loaded safely."
+
+# Start ComfyUI with CUDA initialization
+./start_comfyui_persistent.sh

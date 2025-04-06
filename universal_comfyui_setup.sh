@@ -326,18 +326,50 @@ check_system_compatibility() {
         error_exit "Python version too old. Required >= 3.8.0, Found: ${python_version#Python }"
     fi
     
-    # GPU check
+    # GPU check with enhanced CUDA compatibility
     if command -v nvidia-smi &> /dev/null; then
         log "Checking NVIDIA GPU..." "$GREEN"
-        local nvidia_info=$(nvidia-smi)
-        log "$nvidia_info" "$GREEN"
         
-        # CUDA version check
-        local cuda_version=$(nvidia-smi | grep "CUDA Version" | awk '{print $NF}')
-        log "CUDA Version: $cuda_version" "$GREEN"
+        # Check CUDA driver version
+        local cuda_driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
+        log "CUDA Driver Version: $cuda_driver_version" "$GREEN"
         
-        if ! printf '%s\n%s\n' "11.0" "$cuda_version" | sort -V -C; then
-            log "CUDA version might be too old. Required >= 11.0, Found: $cuda_version" "$YELLOW" "WARNING"
+        # Check CUDA runtime version
+        if command -v nvcc &> /dev/null; then
+            local cuda_runtime_version=$(nvcc --version | grep "release" | awk '{print $6}' | cut -d',' -f1)
+            log "CUDA Runtime Version: $cuda_runtime_version" "$GREEN"
+        else
+            log "CUCC not found, skipping CUDA runtime version check" "$YELLOW" "WARNING"
+        fi
+        
+        # Install CUDA toolkit if needed
+        if ! command -v nvcc &> /dev/null; then
+            log "Installing CUDA toolkit..." "$GREEN"
+            run_command "apt-get update && apt-get install -y cuda-toolkit-12-0" "Failed to install CUDA toolkit" || \
+                log "CUDA toolkit installation failed, continuing..." "$YELLOW" "WARNING"
+        fi
+        
+        # Set CUDA environment variables
+        export CUDA_HOME=/usr/local/cuda
+        export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+        export PATH=$CUDA_HOME/bin:$PATH
+        
+        # Verify CUDA installation
+        if python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+            log "CUDA is available and working" "$GREEN"
+        else
+            log "CUDA is not available or not working properly" "$YELLOW" "WARNING"
+            log "Attempting to fix CUDA setup..." "$YELLOW" "WARNING"
+            
+            # Install PyTorch with CUDA support
+            run_command "pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118" \
+                "Failed to install PyTorch with CUDA support" || \
+                log "PyTorch CUDA installation failed" "$YELLOW" "WARNING"
+            
+            # Verify CUDA again
+            if ! python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+                error_exit "Failed to initialize CUDA. Please check your GPU and CUDA installation."
+            fi
         fi
     else
         error_exit "No NVIDIA GPU detected. This setup requires a CUDA-capable GPU."
@@ -402,6 +434,32 @@ install_extensions() {
     log "Extension installation completed" "$GREEN"
 }
 
+# Create a startup script with CUDA initialization
+create_startup_script() {
+    log "Creating startup script with CUDA initialization..." "$GREEN"
+    
+    cat > "$COMFYUI_DIR/start_with_cuda.sh" << 'EOF'
+#!/bin/bash
+
+# Set CUDA environment variables
+export CUDA_HOME=/usr/local/cuda
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+export PATH=$CUDA_HOME/bin:$PATH
+
+# Initialize CUDA
+python3 -c "import torch; torch.cuda.init()" || {
+    echo "Failed to initialize CUDA"
+    exit 1
+}
+
+# Start ComfyUI
+cd "$(dirname "$0")"
+python3 main.py --listen 0.0.0.0 --port 8188
+EOF
+    
+    chmod +x "$COMFYUI_DIR/start_with_cuda.sh"
+}
+
 # Main setup function
 main() {
     log "Starting ComfyUI setup..." "$GREEN"
@@ -435,73 +493,76 @@ main() {
     run_command "chmod +x *.sh" "Failed to make scripts executable" || \
         error_exit "Failed to make scripts executable"
     
-    # Download models with error handling
-    log "Downloading WAN 2.1 models..." "$GREEN"
+    # Install ComfyUI-WanVideoWrapper
+    log "Installing ComfyUI-WanVideoWrapper..." "$GREEN"
+    mkdir -p "$COMFYUI_DIR/custom_nodes" || error_exit "Failed to create custom_nodes directory"
     
-    # Create necessary model directories
+    # Clone the wrapper repository
+    run_command "git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git \"$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper\"" "Failed to clone ComfyUI-WanVideoWrapper" || \
+        error_exit "Failed to install ComfyUI-WanVideoWrapper"
+    
+    # Install wrapper dependencies
+    cd "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" || error_exit "Failed to change to wrapper directory"
+    if [ -f "requirements.txt" ]; then
+        log "Installing wrapper dependencies..." "$GREEN"
+        run_command "pip install -r requirements.txt" "Failed to install wrapper dependencies" || \
+            log "Some wrapper dependencies failed to install" "$YELLOW" "WARNING"
+    fi
+    
+    # Create model directories
     mkdir -p "$COMFYUI_DIR/models/"{diffusion_models,text_encoders,clip_vision,vae} || \
         error_exit "Failed to create model directories"
     
-    # Install required Python packages
-    log "Installing required Python packages..." "$GREEN"
-    run_command "pip install --upgrade requests tqdm" "Failed to install Python packages" || \
-        error_exit "Failed to install required Python packages"
+    # Download models using the wrapper's model management
+    log "Downloading WAN 2.1 models using ComfyUI-WanVideoWrapper..." "$GREEN"
+    cd "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" || error_exit "Failed to change to wrapper directory"
     
-    # Download models using direct download
-    cd "$COMFYUI_DIR/models" || error_exit "Failed to change to models directory"
-    
-    # Create a simple Python script for downloading
+    # Create a Python script to download models
     cat > download_models.py << 'EOF'
 import os
 import sys
-import requests
+from huggingface_hub import hf_hub_download
 from tqdm import tqdm
 
-def download_file(url, local_path):
-    """Download a file with progress bar."""
+def download_model(repo_id, filename, local_dir):
+    """Download a model from Hugging Face with progress bar."""
     try:
-        # Get file size
-        print(f"\nChecking file size for {url}")
-        response = requests.head(url, timeout=10)
-        total_size = int(response.headers.get('content-length', 0))
-        total_size_mb = total_size / (1024 * 1024)
-        
-        print(f"File size: {total_size_mb:.2f} MB")
-        print(f"Estimated time at 5 MB/s: {total_size_mb / 5:.2f} minutes")
-        
-        # Download with progress bar
-        response = requests.get(url, stream=True, timeout=30)
-        response.raise_for_status()
-        
-        with open(local_path, 'wb') as f, tqdm(
-            desc=os.path.basename(local_path),
-            total=total_size,
-            unit='B',
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as pbar:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    pbar.update(len(chunk))
-        
-        print(f"✅ Download completed: {os.path.basename(local_path)}")
+        print(f"\nDownloading {filename} to {local_dir}...")
+        local_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            local_dir=local_dir,
+            local_dir_use_symlinks=False,
+            resume_download=True,
+            force_download=True
+        )
+        print(f"✅ Successfully downloaded {filename}")
         return True
     except Exception as e:
-        print(f"❌ Download failed: {e}")
+        print(f"❌ Failed to download {filename}: {str(e)}")
         return False
 
 def main():
-    """Main download function."""
-    # Model repository and files
-    repo_id = "DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S"
+    """Download all required models."""
+    repo_id = "Comfy-Org/Wan_2.1_ComfyUI_repackaged"
     
-    # Define models in order of size (smallest first)
     models = [
-        {"dir": "vae", "file": "wan_2.1_vae.safetensors"},
-        {"dir": "clip_vision", "file": "clip_vision_h.safetensors"},
-        {"dir": "text_encoders", "file": "umt5_xxl_fp8_e4m3fn_scaled.safetensors"},
-        {"dir": "diffusion_models", "file": "wan2.1-i2v-14b-480p-Q4_K_S.gguf"}
+        {
+            "dir": "vae",
+            "file": "split_files/vae/wan_2.1_vae.safetensors"
+        },
+        {
+            "dir": "clip_vision",
+            "file": "split_files/clip_vision/clip_vision_h.safetensors"
+        },
+        {
+            "dir": "text_encoders",
+            "file": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+        },
+        {
+            "dir": "diffusion_models",
+            "file": "split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
+        }
     ]
     
     print("\n" + "="*80)
@@ -513,20 +574,14 @@ def main():
         print(f"{i}. {model['file']} -> {model['dir']}")
     print("="*80 + "\n")
     
-    # Download each file
+    # Download each model
     for i, model in enumerate(models, 1):
         dir_name = model["dir"]
         file_name = model["file"]
+        local_dir = os.path.join("..", "models", dir_name)
         
         print(f"\n[{i}/{len(models)}] Downloading {file_name} to {dir_name}...")
-        
-        # Create directory if it doesn't exist
-        os.makedirs(dir_name, exist_ok=True)
-        local_path = os.path.join(dir_name, file_name)
-        
-        # Download file
-        url = f"https://huggingface.co/{repo_id}/resolve/main/{file_name}"
-        if not download_file(url, local_path):
+        if not download_model(repo_id, file_name, local_dir):
             print(f"❌ Failed to download {file_name}")
             sys.exit(1)
     
@@ -548,18 +603,13 @@ EOF
     log "This may take a while. The models are large files..." "$YELLOW" "WARNING"
     log "Downloading WAN 2.1 models (several GB in size)..." "$YELLOW" "WARNING"
     log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
+    log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$GREEN"
     
     # Run the Python script with output redirection and debug mode
     PYTHONUNBUFFERED=1 python3 -u download_models.py 2>&1 | tee model_download_progress.log || {
         log "Model download failed. Check model_download_progress.log for details" "$RED" "ERROR"
         error_exit "Model download failed"
     }
-    
-    # Check if the log file exists and show its contents
-    if [ -f "model_download.log" ]; then
-        log "Model download log:" "$GREEN"
-        cat model_download.log
-    fi
     
     # Verify downloads
     log "Verifying model downloads..." "$GREEN"
@@ -571,14 +621,18 @@ EOF
     
     log "All WAN 2.1 models downloaded successfully!" "$GREEN"
     
-    # Setup workflow with error handling
-    log "Setting up WAN 2.1 workflow..." "$GREEN"
-    if [ -f "./setup_wan_i2v_workflow.sh" ]; then
-        if [ -x "./setup_wan_i2v_workflow.sh" ]; then
-            ./setup_wan_i2v_workflow.sh || {
-                log "Workflow setup failed, creating basic workflow..." "$YELLOW" "WARNING"
-                mkdir -p "$COMFYUI_DIR/workflows" || error_exit "Failed to create workflows directory"
-                cat > "$COMFYUI_DIR/workflows/wan_i2v_workflow.json" << 'EOF'
+    # Create example workflow
+    log "Creating example workflow..." "$GREEN"
+    mkdir -p "$COMFYUI_DIR/workflows" || error_exit "Failed to create workflows directory"
+    
+    # Copy example workflow from wrapper if available
+    if [ -f "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper/example_workflows/wan_i2v_workflow.json" ]; then
+        cp "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper/example_workflows/wan_i2v_workflow.json" \
+           "$COMFYUI_DIR/workflows/wan_i2v_workflow.json" || \
+            log "Failed to copy example workflow" "$YELLOW" "WARNING"
+    else
+        # Create basic workflow if example not available
+        cat > "$COMFYUI_DIR/workflows/wan_i2v_workflow.json" << 'EOF'
 {
     "last_node_id": 1,
     "last_link_id": 1,
@@ -590,28 +644,13 @@ EOF
     "version": 0.4
 }
 EOF
-            }
-        else
-            error_exit "setup_wan_i2v_workflow.sh exists but is not executable"
-        fi
-    else
-        error_exit "setup_wan_i2v_workflow.sh not found"
-    fi
-    
-    # Start ComfyUI server with error handling
-    log "Starting ComfyUI server..." "$GREEN"
-    if [ -f "./start_comfyui.sh" ]; then
-        if [ -x "./start_comfyui.sh" ]; then
-            ./start_comfyui.sh || error_exit "Server startup failed"
-        else
-            error_exit "start_comfyui.sh exists but is not executable"
-        fi
-    else
-        error_exit "start_comfyui.sh not found"
     fi
     
     # Install extensions after ComfyUI setup
     install_extensions
+    
+    # Create startup script with CUDA initialization
+    create_startup_script
     
     log "ComfyUI setup completed successfully!" "$GREEN"
     log "Access URL: http://$(hostname -I | awk '{print $1}'):8188" "$GREEN"
