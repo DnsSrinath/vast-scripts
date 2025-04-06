@@ -349,35 +349,79 @@ check_system_compatibility() {
             log "CUDA driver/library version mismatch detected" "$YELLOW" "WARNING"
             log "Attempting to fix CUDA driver..." "$YELLOW" "WARNING"
             
-            # Try to fix NVIDIA driver without full reinstall
-            run_command "apt-get update" "Failed to update package lists" || \
-                log "Package list update failed" "$YELLOW" "WARNING"
-            
-            # Install NVIDIA kernel module first
-            log "Installing NVIDIA kernel module..." "$YELLOW"
-            run_command "apt-get install -y nvidia-kernel-common nvidia-kernel-source" "Failed to install NVIDIA kernel packages" || \
-                log "NVIDIA kernel package installation failed" "$YELLOW" "WARNING"
-            
-            # Try to build and install the module
-            if [ -d "/usr/src/nvidia" ]; then
-                log "Building NVIDIA kernel module..." "$YELLOW"
-                run_command "cd /usr/src/nvidia && make -j$(nproc) && make install" "Failed to build NVIDIA kernel module" || \
-                    log "NVIDIA kernel module build failed" "$YELLOW" "WARNING"
-            fi
-            
-            # Try to load the module
-            if [ -f "/lib/modules/$(uname -r)/kernel/drivers/nvidia/nvidia.ko" ]; then
-                run_command "modprobe nvidia" "Failed to load NVIDIA kernel module" || \
-                    log "Failed to load NVIDIA kernel module" "$YELLOW" "WARNING"
+            # Check if we're in a container environment
+            if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
+                log "Container environment detected, using container-specific approach" "$YELLOW" "WARNING"
+                
+                # In containers, we typically don't need to install the kernel module
+                # Just ensure the NVIDIA runtime is properly configured
+                if [ -f /usr/bin/nvidia-container-toolkit ]; then
+                    log "NVIDIA Container Toolkit found, ensuring proper configuration" "$GREEN"
+                    # No need to restart services in container
+                else
+                    log "NVIDIA Container Toolkit not found, attempting to install" "$YELLOW" "WARNING"
+                    # Try to install the container toolkit if possible
+                    if command -v apt-get &> /dev/null; then
+                        run_command "apt-get update && apt-get install -y nvidia-container-toolkit" "Failed to install NVIDIA Container Toolkit" || \
+                            log "NVIDIA Container Toolkit installation failed, continuing..." "$YELLOW" "WARNING"
+                    fi
+                fi
+                
+                # Set environment variables for container environment
+                export NVIDIA_VISIBLE_DEVICES=all
+                export NVIDIA_DRIVER_CAPABILITIES=all
+                
+                # Try to verify CUDA is working
+                if python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+                    log "CUDA is available in container environment" "$GREEN"
+                    return 0
+                else
+                    log "CUDA not available in container, continuing in CPU mode" "$YELLOW" "WARNING"
+                    export CUDA_VISIBLE_DEVICES=""
+                    return 0
+                fi
             else
-                log "NVIDIA kernel module not found, trying alternative installation..." "$YELLOW" "WARNING"
-                run_command "apt-get install -y nvidia-driver-535" "Failed to install NVIDIA drivers" || \
-                    log "NVIDIA driver installation failed" "$YELLOW" "WARNING"
+                # Non-container environment - try standard approaches
+                log "Non-container environment detected, using standard approach" "$GREEN"
+                
+                # Try to fix NVIDIA driver without full reinstall
+                run_command "apt-get update" "Failed to update package lists" || \
+                    log "Package list update failed" "$YELLOW" "WARNING"
+                
+                # Install NVIDIA kernel module first
+                log "Installing NVIDIA kernel module..." "$YELLOW"
+                run_command "apt-get install -y nvidia-kernel-common nvidia-kernel-source" "Failed to install NVIDIA kernel packages" || \
+                    log "NVIDIA kernel package installation failed" "$YELLOW" "WARNING"
+                
+                # Try to build and install the module
+                if [ -d "/usr/src/nvidia" ]; then
+                    log "Building NVIDIA kernel module..." "$YELLOW"
+                    run_command "cd /usr/src/nvidia && make -j$(nproc) && make install" "Failed to build NVIDIA kernel module" || \
+                        log "NVIDIA kernel module build failed" "$YELLOW" "WARNING"
+                fi
+                
+                # Try to load the module
+                if [ -f "/lib/modules/$(uname -r)/kernel/drivers/nvidia/nvidia.ko" ]; then
+                    run_command "modprobe nvidia" "Failed to load NVIDIA kernel module" || \
+                        log "Failed to load NVIDIA kernel module" "$YELLOW" "WARNING"
+                else
+                    log "NVIDIA kernel module not found, trying alternative installation..." "$YELLOW" "WARNING"
+                    
+                    # Try to fix broken packages first
+                    run_command "apt-get -f install -y" "Failed to fix broken packages" || \
+                        log "Failed to fix broken packages" "$YELLOW" "WARNING"
+                    
+                    # Try installing a specific driver version that's known to work
+                    run_command "apt-get install -y nvidia-driver-535" "Failed to install NVIDIA drivers" || \
+                        log "NVIDIA driver installation failed" "$YELLOW" "WARNING"
+                fi
+                
+                # Try to restart NVIDIA services if systemd is available
+                if command -v systemctl &> /dev/null; then
+                    run_command "systemctl restart nvidia-persistenced" "Failed to restart NVIDIA services" || \
+                        log "Failed to restart NVIDIA services" "$YELLOW" "WARNING"
+                fi
             fi
-            
-            # Try to restart NVIDIA services
-            run_command "systemctl restart nvidia-persistenced" "Failed to restart NVIDIA services" || \
-                log "Failed to restart NVIDIA services" "$YELLOW" "WARNING"
             
             # Check if CUDA is available after fixes
             if ! python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
@@ -508,20 +552,61 @@ clone_repo() {
 install_extensions() {
     log "Installing ComfyUI extensions..." "$GREEN"
     
-    # List of extensions to install
-    local extensions=(
-        "Kosinkadink/ComfyUI-Advanced-ControlNet"
-        "cubiq/ComfyUI-InstantID"
+    # List of extensions to install with their correct repository URLs
+    declare -A extensions=(
+        ["Kosinkadink/ComfyUI-Advanced-ControlNet"]="https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet"
+        ["cubiq/ComfyUI-InstantID"]="https://github.com/cubiq/ComfyUI-InstantID"
     )
     
-    for ext in "${extensions[@]}"; do
-        local ext_name=$(basename "$ext")
-        log "Installing extension: $ext_name" "$BLUE"
+    for ext_name in "${!extensions[@]}"; do
+        local repo_url="${extensions[$ext_name]}"
+        local ext_dir="$COMFYUI_DIR/custom_nodes/$(basename "$ext_name")"
         
-        if clone_repo "https://github.com/$ext" "$COMFYUI_DIR/custom_nodes/$ext_name"; then
-            log "✅ Successfully installed $ext_name" "$GREEN"
+        log "Installing extension: $(basename "$ext_name")" "$BLUE"
+        
+        # Check if extension already exists
+        if [ -d "$ext_dir" ]; then
+            log "Extension $(basename "$ext_name") already exists, skipping..." "$YELLOW" "WARNING"
+            continue
+        fi
+        
+        # Try to clone the repository
+        if clone_repo "$repo_url" "$ext_dir"; then
+            log "✅ Successfully installed $(basename "$ext_name")" "$GREEN"
+            
+            # Install extension dependencies if requirements.txt exists
+            if [ -f "$ext_dir/requirements.txt" ]; then
+                log "Installing dependencies for $(basename "$ext_name")..." "$BLUE"
+                cd "$ext_dir" || continue
+                run_command "pip install -r requirements.txt" "Failed to install dependencies for $(basename "$ext_name")" || \
+                    log "Some dependencies for $(basename "$ext_name") failed to install" "$YELLOW" "WARNING"
+                cd - > /dev/null || continue
+            fi
         else
-            log "❌ Failed to install $ext_name" "$RED" "ERROR"
+            log "❌ Failed to install $(basename "$ext_name")" "$RED" "ERROR"
+            
+            # Special handling for ComfyUI-InstantID
+            if [[ "$ext_name" == *"ComfyUI-InstantID"* ]]; then
+                log "Attempting alternative installation method for ComfyUI-InstantID..." "$YELLOW" "WARNING"
+                
+                # Try alternative repository URL
+                local alt_repo_url="https://github.com/cubiq/ComfyUI-InstantID.git"
+                if clone_repo "$alt_repo_url" "$ext_dir"; then
+                    log "✅ Successfully installed ComfyUI-InstantID using alternative method" "$GREEN"
+                    
+                    # Install dependencies
+                    if [ -f "$ext_dir/requirements.txt" ]; then
+                        log "Installing dependencies for ComfyUI-InstantID..." "$BLUE"
+                        cd "$ext_dir" || continue
+                        run_command "pip install -r requirements.txt" "Failed to install dependencies for ComfyUI-InstantID" || \
+                            log "Some dependencies for ComfyUI-InstantID failed to install" "$YELLOW" "WARNING"
+                        cd - > /dev/null || continue
+                    fi
+                else
+                    log "❌ Failed to install ComfyUI-InstantID using alternative method" "$RED" "ERROR"
+                    log "You may need to install ComfyUI-InstantID manually" "$YELLOW" "WARNING"
+                fi
+            fi
         fi
     done
 }
@@ -550,6 +635,102 @@ python3 main.py --listen 0.0.0.0 --port 8188
 EOF
     
     chmod +x "$COMFYUI_DIR/start_with_cuda.sh"
+}
+
+# Function to display installation summary
+display_summary() {
+    log "=============================================" "$BLUE"
+    log "           INSTALLATION SUMMARY               " "$BLUE"
+    log "=============================================" "$BLUE"
+    
+    # System information
+    log "System Information:" "$GREEN"
+    log "  - Python Version: $(python3 --version 2>&1)" "$GREEN"
+    log "  - CUDA Available: $(python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "No")" "$GREEN"
+    log "  - GPU Mode: $(if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then echo "CPU"; else echo "GPU"; fi)" "$GREEN"
+    
+    # ComfyUI installation
+    log "ComfyUI Installation:" "$GREEN"
+    if [ -d "$COMFYUI_DIR" ]; then
+        log "  - Status: ✅ Installed" "$GREEN"
+        log "  - Location: $COMFYUI_DIR" "$GREEN"
+        log "  - Version: $(cd "$COMFYUI_DIR" && git rev-parse --short HEAD 2>/dev/null || echo "Unknown")" "$GREEN"
+    else
+        log "  - Status: ❌ Failed" "$RED" "ERROR"
+    fi
+    
+    # Model downloads
+    log "Model Downloads:" "$GREEN"
+    local total_size=0
+    local missing_models=()
+    
+    for dir in diffusion_models text_encoders clip_vision vae; do
+        if [ -d "$COMFYUI_DIR/models/$dir" ]; then
+            local dir_size=$(du -sh "$COMFYUI_DIR/models/$dir" | cut -f1)
+            local file_count=$(find "$COMFYUI_DIR/models/$dir" -type f | wc -l)
+            log "  - $dir: ✅ $file_count files ($dir_size)" "$GREEN"
+            
+            # Add to total size
+            local size_bytes=$(du -sb "$COMFYUI_DIR/models/$dir" | cut -f1)
+            total_size=$((total_size + size_bytes))
+        else
+            log "  - $dir: ❌ Missing" "$RED" "ERROR"
+            missing_models+=("$dir")
+        fi
+    done
+    
+    # Format total size
+    local total_gb=$((total_size / 1073741824))
+    local total_mb=$((total_size / 1048576))
+    local total_kb=$((total_size / 1024))
+    
+    if [ $total_gb -gt 0 ]; then
+        log "  - Total Size: $total_gb GB" "$GREEN"
+    elif [ $total_mb -gt 0 ]; then
+        log "  - Total Size: $total_mb MB" "$GREEN"
+    else
+        log "  - Total Size: $total_kb KB" "$GREEN"
+    fi
+    
+    # Extensions
+    log "Extensions:" "$GREEN"
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-Advanced-ControlNet" ]; then
+        log "  - ComfyUI-Advanced-ControlNet: ✅ Installed" "$GREEN"
+    else
+        log "  - ComfyUI-Advanced-ControlNet: ❌ Failed" "$RED" "ERROR"
+    fi
+    
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-InstantID" ]; then
+        log "  - ComfyUI-InstantID: ✅ Installed" "$GREEN"
+    else
+        log "  - ComfyUI-InstantID: ❌ Failed" "$RED" "ERROR"
+    fi
+    
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" ]; then
+        log "  - ComfyUI-WanVideoWrapper: ✅ Installed" "$GREEN"
+    else
+        log "  - ComfyUI-WanVideoWrapper: ❌ Failed" "$RED" "ERROR"
+    fi
+    
+    # Access information
+    log "Access Information:" "$GREEN"
+    log "  - URL: http://$(hostname -I | awk '{print $1}'):8188" "$GREEN"
+    
+    # Issues summary
+    if [ ${#missing_models[@]} -gt 0 ]; then
+        log "Issues Detected:" "$YELLOW" "WARNING"
+        for model in "${missing_models[@]}"; do
+            log "  - Missing model directory: $model" "$YELLOW" "WARNING"
+        done
+    fi
+    
+    if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+        log "  - Running in CPU mode (CUDA not available)" "$YELLOW" "WARNING"
+    fi
+    
+    log "=============================================" "$BLUE"
+    log "           SUMMARY COMPLETE                  " "$BLUE"
+    log "=============================================" "$BLUE"
 }
 
 # Main setup function
@@ -805,6 +986,9 @@ EOF
     
     log "ComfyUI setup completed successfully!" "$GREEN"
     log "Access URL: http://$(hostname -I | awk '{print $1}'):8188" "$GREEN"
+    
+    # Display installation summary
+    display_summary
 }
 
 # Run main function
