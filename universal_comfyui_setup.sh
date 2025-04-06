@@ -15,6 +15,14 @@ DIAGNOSTIC_LOG="${WORKSPACE}/comfyui_universal_setup.log"
 TEMP_DIR="${WORKSPACE}/temp_setup"
 REQUIREMENTS_FILE="${WORKSPACE}/requirements.txt"
 
+# Define models array at the top level
+MODELS=(
+    "clip_vision/clip_vision_h.safetensors:1264219396:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors:6735906897:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+    "diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors:16401356938:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
+    "vae/wan_2.1_vae.safetensors:33554432:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+)
+
 # Color codes
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -943,14 +951,26 @@ initialize_metadata() {
     local metadata_index="$metadata_dir/index.txt"
     
     # Create metadata directory if it doesn't exist
-    mkdir -p "$metadata_dir"
+    mkdir -p "$metadata_dir" || {
+        log "Failed to create metadata directory: $metadata_dir" "$RED" "ERROR"
+        return 1
+    }
     
     # Create index file if it doesn't exist
     if [ ! -f "$metadata_index" ]; then
-        echo "# ComfyUI Model Metadata Index" > "$metadata_index"
+        echo "# ComfyUI Model Metadata Index" > "$metadata_index" || {
+            log "Failed to create metadata index file" "$RED" "ERROR"
+            return 1
+        }
         echo "# Created: $(date '+%Y-%m-%d %H:%M:%S')" >> "$metadata_index"
         echo "# Format: model_name:expected_size:last_verified" >> "$metadata_index"
         echo "----------------------------------------" >> "$metadata_index"
+    fi
+    
+    # Check if MODELS array is defined
+    if [ -z "${MODELS:-}" ]; then
+        log "MODELS array not defined, skipping model metadata initialization" "$YELLOW" "WARNING"
+        return 0
     fi
     
     # Create empty metadata files for each expected model if they don't exist
@@ -960,29 +980,45 @@ initialize_metadata() {
         local metadata_file="$metadata_dir/${model_name}.meta"
         
         if [ ! -f "$metadata_file" ]; then
-            echo "path=/workspace/ComfyUI/models/$path" > "$metadata_file"
+            echo "path=/workspace/ComfyUI/models/$path" > "$metadata_file" || {
+                log "Failed to create metadata file for $model_name" "$RED" "ERROR"
+                continue
+            }
             echo "size=$size" >> "$metadata_file"
             echo "timestamp=0" >> "$metadata_file"
             echo "checksum=" >> "$metadata_file"
             echo "status=not_downloaded" >> "$metadata_file"
             
             # Add to index
-            echo "$model_name:$size:0" >> "$metadata_dir/index.txt"
+            echo "$model_name:$size:0" >> "$metadata_dir/index.txt" || {
+                log "Failed to update index for $model_name" "$RED" "ERROR"
+            }
         fi
     done
+    
+    return 0
 }
 
 # Function to manage model metadata
 manage_metadata() {
     local action="$1"
     local model_path="$2"
-    local expected_size="$3"
+    local expected_size="${3:-0}"  # Make size parameter optional with default value
     local metadata_dir="/workspace/ComfyUI/models/.metadata"
     local metadata_file="$metadata_dir/$(basename "$model_path").meta"
     
     # Initialize metadata system if this is the first run
     if [ ! -d "$metadata_dir" ]; then
         initialize_metadata
+    fi
+    
+    # Create metadata file if it doesn't exist
+    if [ ! -f "$metadata_file" ]; then
+        echo "path=$model_path" > "$metadata_file"
+        echo "size=$expected_size" >> "$metadata_file"
+        echo "timestamp=0" >> "$metadata_file"
+        echo "checksum=" >> "$metadata_file"
+        echo "status=not_downloaded" >> "$metadata_file"
     fi
     
     case "$action" in
@@ -1009,7 +1045,7 @@ manage_metadata() {
             
             # Update index
             local model_name=$(basename "$model_path")
-            sed -i "s|^$model_name:.*|$model_name:$expected_size:$(date +%s)|" "$metadata_dir/index.txt"
+            sed -i "s|^$model_name:.*|$model_name:$expected_size:$(date +%s)|" "$metadata_dir/index.txt" 2>/dev/null || true
             ;;
         "verify")
             if [ -f "$metadata_file" ]; then
@@ -1029,6 +1065,10 @@ manage_metadata() {
                 echo "not_downloaded"
             fi
             ;;
+        *)
+            log "Unknown metadata action: $action" "$RED" "ERROR"
+            return 1
+            ;;
     esac
 }
 
@@ -1039,8 +1079,17 @@ download_model() {
     local expected_size="$3"
     local model_name=$(basename "$output_path")
     
+    # Validate parameters
+    if [ -z "$url" ] || [ -z "$output_path" ]; then
+        log "Invalid parameters for download_model: url or output_path is empty" "$RED" "ERROR"
+        return 1
+    fi
+    
     # Create directory if it doesn't exist
-    mkdir -p "$(dirname "$output_path")"
+    mkdir -p "$(dirname "$output_path")" || {
+        log "Failed to create directory for $model_name" "$RED" "ERROR"
+        return 1
+    }
     
     # Check if file exists and is valid according to metadata
     if manage_metadata "check" "$output_path" "$expected_size"; then
@@ -1058,7 +1107,10 @@ download_model() {
             return 0
         else
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ $model_name exists but size mismatch ($actual_size vs $expected_size), re-downloading"
-            rm -f "$output_path"
+            rm -f "$output_path" || {
+                log "Failed to remove existing file $output_path" "$RED" "ERROR"
+                return 1
+            }
         fi
     fi
     
@@ -1073,7 +1125,9 @@ download_model() {
             return 0
         else
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Downloaded file size mismatch for $model_name ($downloaded_size vs $expected_size bytes)"
-            rm -f "$output_path"
+            rm -f "$output_path" || {
+                log "Failed to remove invalid file $output_path" "$RED" "ERROR"
+            }
             return 1
         fi
     else
@@ -1298,12 +1352,7 @@ main() {
     initialize_metadata
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking WAN 2.1 models..."
-    MODELS=(
-        "clip_vision/clip_vision_h.safetensors:1264219396:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
-        "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors:6735906897:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-        "diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors:16401356938:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
-        "vae/wan_2.1_vae.safetensors:33554432:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
-    )
+    # MODELS array is already defined at the top of the script
 
     # First verify all existing files
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Verifying existing model files..."
