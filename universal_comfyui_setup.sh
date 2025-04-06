@@ -17,10 +17,10 @@ REQUIREMENTS_FILE="${WORKSPACE}/requirements.txt"
 
 # Define models array at the top level
 MODELS=(
-    "clip_vision/clip_vision_h.safetensors:1264219396:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
-    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors:6735906897:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-    "diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors:16401356938:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
-    "vae/wan_2.1_vae.safetensors:33554432:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+    "clip_vision/clip_vision_h.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+    "diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
+    "vae/wan_2.1_vae.safetensors:https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
 )
 
 # Color codes
@@ -1488,9 +1488,54 @@ download_wan_models() {
     done
 }
 
+# Function to get file size from URL
+get_file_size_from_url() {
+    local url="$1"
+    local size=0
+    
+    # Try using curl to get file size
+    if command -v curl &> /dev/null; then
+        size=$(curl -sI "$url" | grep -i "content-length:" | awk '{print $2}' | tr -d '\r')
+    # Fallback to wget if curl is not available
+    elif command -v wget &> /dev/null; then
+        size=$(wget --spider --server-response "$url" 2>&1 | grep -i "content-length:" | awk '{print $2}')
+    fi
+    
+    # Return 0 if size couldn't be determined
+    if [ -z "$size" ] || [ "$size" = "0" ]; then
+        return 1
+    fi
+    
+    echo "$size"
+    return 0
+}
+
+# Function to initialize model sizes
+initialize_model_sizes() {
+    local temp_models=()
+    
+    for model_info in "${MODELS[@]}"; do
+        IFS=':' read -r path url <<< "$model_info"
+        local size=$(get_file_size_from_url "$url")
+        
+        if [ $? -eq 0 ] && [ ! -z "$size" ]; then
+            temp_models+=("$path:$size:$url")
+        else
+            log "Warning: Could not determine size for $path, skipping..." "$YELLOW" "WARNING"
+        fi
+    done
+    
+    # Update MODELS array with sizes
+    MODELS=("${temp_models[@]}")
+}
+
 # Main setup function
 main() {
     log "Starting ComfyUI setup..." "$GREEN"
+    
+    # Initialize model sizes
+    log "Initializing model sizes..." "$BLUE"
+    initialize_model_sizes
     
     # Step 1: System Preparation
     log "Step 1: System Preparation" "$BLUE"
