@@ -953,12 +953,13 @@ display_summary() {
                     local stored_size=$(cat "$metadata_path" | grep "^size=" | cut -d'=' -f2)
                     local timestamp=$(cat "$metadata_path" | grep "^timestamp=" | cut -d'=' -f2)
                     local date_str=$(date -d "@$timestamp" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "Unknown")
+                    local status=$(cat "$metadata_path" | grep "^status=" | cut -d'=' -f2)
                     
-                    if [ "$stored_size" = "$size" ]; then
+                    if [ "$stored_size" = "$size" ] && [ "$status" = "verified" ]; then
                         log "  - $model_name: ✅ Verified ($formatted_size, verified on $date_str)" "$GREEN"
                         skipped_models+=("$model_name")
                     else
-                        log "  - $model_name: ⚠️ Size mismatch ($formatted_size vs $(format_size $stored_size))" "$YELLOW" "WARNING"
+                        log "  - $model_name: ⚠️ Size mismatch or unverified ($formatted_size vs $(format_size $stored_size))" "$YELLOW" "WARNING"
                         downloaded_models+=("$model_name")
                     fi
                 else
@@ -1038,7 +1039,7 @@ display_summary() {
 
 # Function to initialize metadata system
 initialize_metadata() {
-    local metadata_dir="/workspace/ComfyUI/models/.metadata"
+    local metadata_dir="$COMFYUI_DIR/models/.metadata"
     local metadata_index="$metadata_dir/index.txt"
     
     # Create metadata directory if it doesn't exist
@@ -1058,35 +1059,6 @@ initialize_metadata() {
         echo "----------------------------------------" >> "$metadata_index"
     fi
     
-    # Check if MODELS array is defined
-    if [ -z "${MODELS:-}" ]; then
-        log "MODELS array not defined, skipping model metadata initialization" "$YELLOW" "WARNING"
-        return 0
-    fi
-    
-    # Create empty metadata files for each expected model if they don't exist
-    for model_info in "${MODELS[@]}"; do
-        IFS=':' read -r path size url <<< "$model_info"
-        local model_name=$(basename "$path")
-        local metadata_file="$metadata_dir/${model_name}.meta"
-        
-        if [ ! -f "$metadata_file" ]; then
-            echo "path=/workspace/ComfyUI/models/$path" > "$metadata_file" || {
-                log "Failed to create metadata file for $model_name" "$RED" "ERROR"
-                continue
-            }
-            echo "size=$size" >> "$metadata_file"
-            echo "timestamp=0" >> "$metadata_file"
-            echo "checksum=" >> "$metadata_file"
-            echo "status=not_downloaded" >> "$metadata_file"
-            
-            # Add to index
-            echo "$model_name:$size:0" >> "$metadata_dir/index.txt" || {
-                log "Failed to update index for $model_name" "$RED" "ERROR"
-            }
-        fi
-    done
-    
     return 0
 }
 
@@ -1095,7 +1067,7 @@ manage_metadata() {
     local action="$1"
     local model_path="$2"
     local expected_size="${3:-0}"  # Make size parameter optional with default value
-    local metadata_dir="/workspace/ComfyUI/models/.metadata"
+    local metadata_dir="$COMFYUI_DIR/models/.metadata"
     local metadata_file="$metadata_dir/$(basename "$model_path").meta"
     
     # Initialize metadata system if this is the first run
@@ -1216,7 +1188,6 @@ format_size() {
 
 # Function to download a model with metadata tracking
 download_model() {
-    # Initialize all variables at the beginning
     local url="$1"
     local output_path="$2"
     local expected_size="$3"
@@ -1343,10 +1314,12 @@ download_model() {
                 fi
             fi
         else
-            log "❌ Failed to download $model_name (attempt $((retry_count + 1))/$max_retries)" "$RED" "ERROR"
+            log "❌ Failed to download $model_name from $url" "$RED" "ERROR"
             retry_count=$((retry_count + 1))
-            sleep 5
-            continue
+            if [ $retry_count -lt $max_retries ]; then
+                log "Retrying in 5 seconds... (Attempt $retry_count of $max_retries)" "$YELLOW" "WARNING"
+                sleep 5
+            fi
         fi
     done
     
@@ -1483,25 +1456,38 @@ check_cuda_compatibility() {
     fi
 }
 
-# Function to download WAN 2.1 models
+# Function to download WAN models
 download_wan_models() {
     local model_name=""
     local output_path=""
     local url=""
     local size=""
     local current_status=""
+    local total_models=0
+    local processed=0
+    local success=0
+    local failed=0
+    local skipped=0
     
     # Initialize metadata system
     initialize_metadata
     
     log "Checking WAN 2.1 models..." "$BLUE"
     
+    # Count total models
+    for model_info in "${MODELS[@]}"; do
+        total_models=$((total_models + 1))
+    done
+    
     # First verify all existing files
     log "Verifying existing model files..." "$BLUE"
     for model_info in "${MODELS[@]}"; do
         IFS=':' read -r path size url <<< "$model_info"
-        output_path="/workspace/ComfyUI/models/$path"
+        output_path="$COMFYUI_DIR/models/$path"
         model_name=$(basename "$path")
+        processed=$((processed + 1))
+        
+        log "[$processed/$total_models] Processing $model_name..." "$BLUE"
         
         # Get current status
         current_status=$(manage_metadata "status" "$output_path" "$size")
@@ -1511,20 +1497,47 @@ download_wan_models() {
             if ! manage_metadata "verify" "$output_path"; then
                 log "⚠️ $model_name exists but is invalid, will re-download" "$YELLOW" "WARNING"
                 rm -f "$output_path"
+            else
+                log "✅ $model_name exists and is valid, skipping..." "$GREEN"
+                skipped=$((skipped + 1))
+                continue
             fi
         fi
     done
-
+    
     # Then download missing or invalid files
     log "Downloading missing or invalid models..." "$BLUE"
     for model_info in "${MODELS[@]}"; do
         IFS=':' read -r path size url <<< "$model_info"
-        output_path="/workspace/ComfyUI/models/$path"
+        output_path="$COMFYUI_DIR/models/$path"
         model_name=$(basename "$path")
         
+        # Skip if already verified
+        if [ -f "$output_path" ] && manage_metadata "verify" "$output_path"; then
+            continue
+        fi
+        
         # Download the model
-        download_model "$url" "$output_path" "$size"
+        if download_model "$url" "$output_path" "$size"; then
+            success=$((success + 1))
+        else
+            failed=$((failed + 1))
+        fi
     done
+    
+    # Generate final report
+    log "Model downloads complete:" "$BLUE"
+    log "  - Total models: $total_models" "$BLUE"
+    log "  - Successfully downloaded: $success" "$GREEN"
+    log "  - Skipped (already valid): $skipped" "$BLUE"
+    log "  - Failed: $failed" "$RED" "ERROR"
+    
+    if [ $failed -gt 0 ]; then
+        log "⚠️ Some models failed to download or verify" "$YELLOW" "WARNING"
+        return 1
+    fi
+    
+    return 0
 }
 
 # Function to get file size from URL
@@ -1728,7 +1741,7 @@ verify_model_file() {
         log "✅ Verified $model_name ($(format_size "$file_size"))" "$GREEN"
         return 0
     else
-        log "❌ Verification failed for $model_name ($(format_size "$file_size") vs $(format_size "$expected_size"))" "$RED" "ERROR"
+        log "❌ Invalid model file: $model_name" "$RED" "ERROR"
         return 1
     fi
 }
