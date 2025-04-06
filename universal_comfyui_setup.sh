@@ -339,7 +339,29 @@ check_system_compatibility() {
             local cuda_runtime_version=$(nvcc --version | grep "release" | awk '{print $6}' | cut -d',' -f1)
             log "CUDA Runtime Version: $cuda_runtime_version" "$GREEN"
         else
-            log "CUCC not found, skipping CUDA runtime version check" "$YELLOW" "WARNING"
+            log "NVCC not found, skipping CUDA runtime version check" "$YELLOW" "WARNING"
+        fi
+        
+        # Handle driver/library version mismatch
+        if [[ "$cuda_driver_version" == "unknown" || "$cuda_driver_version" == *"Failed to initialize NVML"* ]]; then
+            log "CUDA driver/library version mismatch detected" "$YELLOW" "WARNING"
+            log "Attempting to fix CUDA driver..." "$YELLOW" "WARNING"
+            
+            # Try to reinstall NVIDIA drivers
+            run_command "apt-get update && apt-get install -y --reinstall nvidia-driver-535" "Failed to reinstall NVIDIA drivers" || \
+                log "NVIDIA driver reinstallation failed" "$YELLOW" "WARNING"
+            
+            # Try to load NVIDIA kernel module
+            run_command "modprobe nvidia" "Failed to load NVIDIA kernel module" || \
+                log "Failed to load NVIDIA kernel module" "$YELLOW" "WARNING"
+            
+            # Check if CUDA is available after fixes
+            if ! python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+                log "CUDA still not available after fixes" "$YELLOW" "WARNING"
+                log "Continuing in CPU mode..." "$YELLOW" "WARNING"
+                export CUDA_VISIBLE_DEVICES=""
+                return 0
+            fi
         fi
         
         # Install CUDA toolkit if needed
@@ -368,11 +390,15 @@ check_system_compatibility() {
             
             # Verify CUDA again
             if ! python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
-                error_exit "Failed to initialize CUDA. Please check your GPU and CUDA installation."
+                log "CUDA initialization failed, continuing in CPU mode" "$YELLOW" "WARNING"
+                export CUDA_VISIBLE_DEVICES=""
+                return 0
             fi
         fi
     else
-        error_exit "No NVIDIA GPU detected. This setup requires a CUDA-capable GPU."
+        log "No NVIDIA GPU detected, continuing in CPU mode" "$YELLOW" "WARNING"
+        export CUDA_VISIBLE_DEVICES=""
+        return 0
     fi
     
     # Memory check
