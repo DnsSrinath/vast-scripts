@@ -86,8 +86,41 @@ WAN 2.1 is a series of 4 video generation models:
 ### Quick Setup with Dependencies Script
 The easiest way to set up WAN 2.1 is to use the provided dependencies script:
 
+1. Clone the repository:
+   ```bash
+   # Change to the workspace directory
+   cd /workspace
+   
+   # Clone the repository
+   git clone https://github.com/DnsSrinath/vast-scripts.git
+   ```
+
+2. Make the script executable:
+   ```bash
+   # Make the script executable
+   chmod +x vast-scripts/wan_2.1_dependencies.sh
+   ```
+
+3. Run the script:
+   ```bash
+   # Run the script
+   ./vast-scripts/wan_2.1_dependencies.sh
+   ```
+
+The script will:
+- Create or clean the necessary model directories
+- Download all required models from the Comfy-Org repackaged repository (no authentication required)
+- Offer to download additional models (14B versions)
+- Provide instructions for restarting ComfyUI
+
+Alternatively, if you prefer to download just the script without cloning the entire repository:
+
 1. Download the script:
    ```bash
+   # Change to the workspace directory
+   cd /workspace
+   
+   # Download the script
    wget https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/wan_2.1_dependencies.sh
    ```
 
@@ -101,11 +134,13 @@ The easiest way to set up WAN 2.1 is to use the provided dependencies script:
    ./wan_2.1_dependencies.sh
    ```
 
-The script will:
-- Create or clean the necessary model directories
-- Download all required models from the Comfy-Org repackaged repository (no authentication required)
-- Offer to download additional models (14B versions)
-- Provide instructions for restarting ComfyUI
+**Note:** After running the script, you'll need to restart ComfyUI to load the new models:
+```bash
+# Restart ComfyUI to load the new models
+pkill -f "python3.*main.py.*--port 8188"
+cd /workspace
+./vast-scripts/vast-scripts/vast_startup.sh
+```
 
 ### Method 1: Using ComfyUI Manager (Recommended)
 If you already have ComfyUI Manager installed, you can use it to install the WAN plugin:
