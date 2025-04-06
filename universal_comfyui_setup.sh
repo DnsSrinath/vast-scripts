@@ -1490,31 +1490,40 @@ download_wan_models() {
 main() {
     log "Starting ComfyUI setup..." "$GREEN"
     
-    # Display installation plan
-    display_plan
+    # Step 1: System Preparation
+    log "Step 1: System Preparation" "$BLUE"
     
-    # Update status for system preparation
-    update_installation_status "1. System Preparation" "in_progress"
+    # Check Python version
+    PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2)
+    log "Python version: $PYTHON_VERSION" "$GREEN"
     
-    # Prepare system
-    prepare_system || error_exit "System preparation failed"
-    update_installation_status "1. System Preparation" "completed"
+    # Check CUDA availability
+    if command -v nvidia-smi &> /dev/null; then
+        log "NVIDIA GPU detected" "$GREEN"
+        CUDA_DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
+        log "CUDA Driver Version: $CUDA_DRIVER_VERSION" "$GREEN"
+        
+        # Set CUDA environment variables
+        export CUDA_HOME=/usr/local/cuda
+        export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+        export PATH=$CUDA_HOME/bin:$PATH
+        
+        # Install PyTorch with CUDA support
+        log "Installing PyTorch with CUDA support..." "$GREEN"
+        pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 || \
+            log "PyTorch CUDA installation failed, will try CPU mode" "$YELLOW"
+    else
+        log "No NVIDIA GPU detected, using CPU mode" "$YELLOW"
+        export CUDA_VISIBLE_DEVICES=""
+        
+        # Install CPU version of PyTorch
+        log "Installing PyTorch CPU version..." "$GREEN"
+        pip3 install torch torchvision torchaudio || \
+            log "PyTorch installation failed" "$YELLOW"
+    fi
     
-    # Initialize metadata system first
-    log "Initializing metadata system..." "$GREEN"
-    initialize_metadata
-    
-    # Check system compatibility (non-blocking)
-    check_system_compatibility || log "System compatibility check failed, continuing anyway..." "$YELLOW" "WARNING"
-    
-    # Check CUDA compatibility and store in metadata (non-blocking)
-    check_cuda_compatibility || log "CUDA check failed, continuing in CPU mode..." "$YELLOW" "WARNING"
-    
-    # Update status for ComfyUI installation
-    update_installation_status "2. ComfyUI Installation" "in_progress"
-    
-    # Always reinstall ComfyUI to ensure latest version
-    log "Reinstalling ComfyUI to ensure latest version..." "$GREEN"
+    # Step 2: ComfyUI Installation
+    log "Step 2: ComfyUI Installation" "$BLUE"
     
     # Remove existing ComfyUI directory if it exists
     if [ -d "$COMFYUI_DIR" ]; then
@@ -1524,69 +1533,225 @@ main() {
     
     # Clone ComfyUI repository
     log "Cloning ComfyUI repository..." "$GREEN"
-    run_command "git clone https://github.com/comfyanonymous/ComfyUI.git \"$COMFYUI_DIR\"" "Failed to clone ComfyUI repository" || \
-        error_exit "ComfyUI repository clone failed"
+    git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR" || \
+        error_exit "Failed to clone ComfyUI repository"
     
     # Install ComfyUI dependencies
     log "Installing ComfyUI dependencies..." "$GREEN"
     cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
-    run_command "pip install -r requirements.txt" "Failed to install ComfyUI dependencies" || \
-        error_exit "ComfyUI dependencies installation failed"
-    
-    update_installation_status "2. ComfyUI Installation" "completed"
-    
-    # Make all scripts executable
-    log "Making scripts executable..." "$GREEN"
-    cd "$WORKSPACE/vast-scripts" || error_exit "Failed to change to vast-scripts directory"
-    run_command "chmod +x *.sh" "Failed to make scripts executable" || \
-        error_exit "Failed to make scripts executable"
-    
-    # Check if ComfyUI-WanVideoWrapper is already installed
-    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" ]; then
-        log "ComfyUI-WanVideoWrapper is already installed, skipping..." "$GREEN"
-    else
-        # Install ComfyUI-WanVideoWrapper
-        log "Installing ComfyUI-WanVideoWrapper..." "$GREEN"
-        mkdir -p "$COMFYUI_DIR/custom_nodes" || error_exit "Failed to create custom_nodes directory"
-        
-        # Clone the wrapper repository
-        run_command "git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git \"$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper\"" "Failed to clone ComfyUI-WanVideoWrapper" || \
-            error_exit "Failed to install ComfyUI-WanVideoWrapper"
-        
-        # Install wrapper dependencies
-        cd "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" || error_exit "Failed to change to wrapper directory"
-        if [ -f "requirements.txt" ]; then
-            log "Installing wrapper dependencies..." "$GREEN"
-            run_command "pip install -r requirements.txt" "Failed to install wrapper dependencies" || \
-                log "Some wrapper dependencies failed to install" "$YELLOW" "WARNING"
-        fi
-    fi
+    pip3 install -r requirements.txt || error_exit "Failed to install ComfyUI dependencies"
     
     # Create model directories
+    log "Creating model directories..." "$GREEN"
     mkdir -p "$COMFYUI_DIR/models/"{diffusion_models,text_encoders,clip_vision,vae} || \
         error_exit "Failed to create model directories"
     
-    # Download WAN 2.1 models with metadata tracking
-    log "Downloading WAN 2.1 models..." "$GREEN"
-    log "This may take a while. The models are large files..." "$YELLOW" "WARNING"
-    log "Downloading WAN 2.1 models (several GB in size)..." "$YELLOW" "WARNING"
-    log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
-    log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$GREEN"
+    # Step 3: Model Downloads
+    log "Step 3: Model Downloads" "$BLUE"
+    log "This may take a while. The models are large files..." "$YELLOW"
+    log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW"
     
-    # Use the download_wan_models function instead of direct download_model calls
-    download_wan_models
+    # Download WAN 2.1 models
+    for model_info in "${MODELS[@]}"; do
+        IFS=':' read -r path size url <<< "$model_info"
+        output_path="$COMFYUI_DIR/models/$path"
+        model_name=$(basename "$path")
+        
+        # Create directory if it doesn't exist
+        mkdir -p "$(dirname "$output_path")" || error_exit "Failed to create directory for $model_name"
+        
+        # Check if file already exists
+        if [ -f "$output_path" ]; then
+            log "Model $model_name already exists, skipping..." "$GREEN"
+            continue
+        fi
+        
+        # Download the model
+        log "Downloading $model_name..." "$BLUE"
+        wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$output_path" || \
+            error_exit "Failed to download $model_name"
+        
+        # Verify the file exists and has content
+        if [ ! -f "$output_path" ] || [ ! -s "$output_path" ]; then
+            error_exit "Downloaded file $model_name is missing or empty"
+        fi
+        
+        log "Successfully downloaded $model_name" "$GREEN"
+    done
     
-    # Install extensions after ComfyUI setup
-    install_extensions
+    # Step 4: Extensions Installation
+    log "Step 4: Extensions Installation" "$BLUE"
     
-    # Create startup script with CUDA initialization
-    create_startup_script
+    # Install ComfyUI-WanVideoWrapper
+    log "Installing ComfyUI-WanVideoWrapper..." "$GREEN"
+    mkdir -p "$COMFYUI_DIR/custom_nodes" || error_exit "Failed to create custom_nodes directory"
+    git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" || \
+        log "Failed to install ComfyUI-WanVideoWrapper" "$YELLOW"
     
-    log "ComfyUI setup completed successfully!" "$GREEN"
-    log "Access URL: http://$(hostname -I | awk '{print $1}'):8188" "$GREEN"
+    # Install ComfyUI-Advanced-ControlNet
+    log "Installing ComfyUI-Advanced-ControlNet..." "$GREEN"
+    git clone https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git "$COMFYUI_DIR/custom_nodes/ComfyUI-Advanced-ControlNet" || \
+        log "Failed to install ComfyUI-Advanced-ControlNet" "$YELLOW"
     
-    # Display installation summary
-    display_summary
+    # Install ComfyUI-InstantID
+    log "Installing ComfyUI-InstantID..." "$GREEN"
+    git clone https://github.com/cubiq/ComfyUI_InstantID.git "$COMFYUI_DIR/custom_nodes/ComfyUI-InstantID" || \
+        log "Failed to install ComfyUI-InstantID" "$YELLOW"
+    
+    # Install extension dependencies
+    for ext_dir in "$COMFYUI_DIR/custom_nodes/"*; do
+        if [ -d "$ext_dir" ] && [ -f "$ext_dir/requirements.txt" ]; then
+            ext_name=$(basename "$ext_dir")
+            log "Installing dependencies for $ext_name..." "$GREEN"
+            cd "$ext_dir" || continue
+            pip3 install -r requirements.txt || log "Some dependencies for $ext_name failed to install" "$YELLOW"
+            cd - > /dev/null || continue
+        fi
+    done
+    
+    # Step 5: Final Setup
+    log "Step 5: Final Setup" "$BLUE"
+    
+    # Create startup script
+    log "Creating startup script..." "$GREEN"
+    cat > "$COMFYUI_DIR/start_comfyui.sh" << 'EOF'
+#!/bin/bash
+
+# Set CUDA environment variables
+export CUDA_HOME=/usr/local/cuda
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+export PATH=$CUDA_HOME/bin:$PATH
+
+# Start ComfyUI
+cd "$(dirname "$0")"
+python3 main.py --listen 0.0.0.0 --port 8188
+EOF
+
+    chmod +x "$COMFYUI_DIR/start_comfyui.sh"
+    
+    # Create container startup script
+    log "Creating container startup script..." "$GREEN"
+    cat > "$WORKSPACE/container_startup.sh" << 'EOF'
+#!/bin/bash
+# Check if ComfyUI is already running
+if pgrep -f "python3.*main.py" > /dev/null; then
+    echo "ComfyUI is already running!"
+    exit 0
+fi
+
+# Check if CUDA is available
+if command -v nvidia-smi &> /dev/null && python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+    echo "Starting ComfyUI with CUDA support..."
+    cd /workspace/ComfyUI
+    python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+else
+    echo "Starting ComfyUI in CPU mode..."
+    cd /workspace/ComfyUI
+    CUDA_VISIBLE_DEVICES="" PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 --cpu > comfyui.log 2>&1 &
+fi
+
+# Wait for ComfyUI to start
+sleep 5
+
+# Check if ComfyUI started successfully
+if pgrep -f "python3.*main.py" > /dev/null; then
+    echo "ComfyUI started successfully!"
+    touch /workspace/.comfyui_started
+else
+    echo "Failed to start ComfyUI!"
+    echo "Check /workspace/ComfyUI/comfyui.log for details"
+    exit 1
+fi
+EOF
+
+    chmod +x "$WORKSPACE/container_startup.sh"
+    
+    # Add the startup script to .bashrc for auto-start if not already added
+    if ! grep -q "container_startup.sh" ~/.bashrc; then
+        log "Adding startup script to .bashrc..." "$GREEN"
+        echo "if [ ! -f /workspace/.comfyui_started ]; then" >> ~/.bashrc
+        echo "    /workspace/container_startup.sh" >> ~/.bashrc
+        echo "    touch /workspace/.comfyui_started" >> ~/.bashrc
+        echo "fi" >> ~/.bashrc
+    fi
+    
+    # Display summary
+    log "=============================================" "$BLUE"
+    log "           INSTALLATION SUMMARY               " "$BLUE"
+    log "=============================================" "$BLUE"
+    log "System Information:" "$GREEN"
+    log "  - Python Version: $PYTHON_VERSION" "$GREEN"
+    log "  - CUDA Available: $(python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "No")" "$GREEN"
+    log "  - GPU Mode: $(if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then echo "CPU"; else echo "GPU"; fi)" "$GREEN"
+    
+    log "ComfyUI Installation:" "$GREEN"
+    if [ -d "$COMFYUI_DIR" ]; then
+        log "  - Status: ✅ Installed" "$GREEN"
+        log "  - Location: $COMFYUI_DIR" "$GREEN"
+    fi
+    
+    log "Model Downloads:" "$GREEN"
+    for model_info in "${MODELS[@]}"; do
+        IFS=':' read -r path size url <<< "$model_info"
+        model_name=$(basename "$path")
+        if [ -f "$COMFYUI_DIR/models/$path" ]; then
+            log "  - $model_name: ✅ Downloaded" "$GREEN"
+        else
+            log "  - $model_name: ❌ Failed" "$RED"
+        fi
+    done
+    
+    log "Extensions:" "$GREEN"
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" ]; then
+        log "  - ComfyUI-WanVideoWrapper: ✅ Installed" "$GREEN"
+    else
+        log "  - ComfyUI-WanVideoWrapper: ❌ Failed" "$RED"
+    fi
+    
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-Advanced-ControlNet" ]; then
+        log "  - ComfyUI-Advanced-ControlNet: ✅ Installed" "$GREEN"
+    else
+        log "  - ComfyUI-Advanced-ControlNet: ❌ Failed" "$RED"
+    fi
+    
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-InstantID" ]; then
+        log "  - ComfyUI-InstantID: ✅ Installed" "$GREEN"
+    else
+        log "  - ComfyUI-InstantID: ❌ Failed" "$RED"
+    fi
+    
+    log "Access Information:" "$GREEN"
+    log "  - URL: http://$(hostname -I | awk '{print $1}'):8188" "$GREEN"
+    
+    log "=============================================" "$BLUE"
+    log "           INSTALLATION COMPLETE              " "$BLUE"
+    log "=============================================" "$BLUE"
+    
+    # Start ComfyUI
+    log "Starting ComfyUI..." "$GREEN"
+    cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
+    
+    if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+        log "Starting in CPU mode..." "$YELLOW"
+        CUDA_VISIBLE_DEVICES="" PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 --cpu > comfyui.log 2>&1 &
+    else
+        log "Starting with CUDA support..." "$GREEN"
+        python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+    fi
+    
+    # Wait for ComfyUI to start
+    sleep 5
+    
+    # Check if ComfyUI started successfully
+    if pgrep -f "python3.*main.py" > /dev/null; then
+        log "ComfyUI started successfully!" "$GREEN"
+        log "Access URL: http://$(hostname -I | awk '{print $1}'):8188" "$GREEN"
+        touch /workspace/.comfyui_started
+    else
+        log "Failed to start ComfyUI!" "$RED"
+        log "Check /workspace/ComfyUI/comfyui.log for details" "$RED"
+        exit 1
+    fi
 }
 
 # Run main function
