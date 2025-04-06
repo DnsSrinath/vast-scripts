@@ -141,17 +141,19 @@ done
 # Create proper extra_model_paths.yaml configuration
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Creating extra_model_paths.yaml configuration..."
 cat > /workspace/ComfyUI/extra_model_paths.yaml << 'EOF'
-base_path: /workspace/ComfyUI
-checkpoints: models/checkpoints
-configs: models/configs
-vae: models/vae
-loras: models/loras
-upscale_models: models/upscale_models
-embeddings: models/embeddings
-hypernetworks: models/hypernetworks
-controlnet: models/controlnet
-gligen: models/gligen
-device_mode: cpu
+{
+  "base_path": "/workspace/ComfyUI",
+  "checkpoints": "models/checkpoints",
+  "configs": "models/configs",
+  "vae": "models/vae",
+  "loras": "models/loras",
+  "upscale_models": "models/upscale_models",
+  "embeddings": "models/embeddings",
+  "hypernetworks": "models/hypernetworks",
+  "controlnet": "models/controlnet",
+  "gligen": "models/gligen",
+  "device_mode": "cpu"
+}
 EOF
 
 # Create a startup script that will be executed when the container starts
