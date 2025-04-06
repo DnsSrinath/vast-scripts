@@ -513,151 +513,123 @@ main() {
     mkdir -p "$COMFYUI_DIR/models/"{diffusion_models,text_encoders,clip_vision,vae} || \
         error_exit "Failed to create model directories"
     
-    # Download models using the wrapper's model management
-    log "Downloading WAN 2.1 models using ComfyUI-WanVideoWrapper..." "$GREEN"
-    cd "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" || error_exit "Failed to change to wrapper directory"
+    # Download models using direct wget/curl
+    log "Downloading WAN 2.1 models..." "$GREEN"
     
-    # Create a Python script to download models
-    cat > download_models.py << 'EOF'
-import os
-import sys
-import time
-from huggingface_hub import hf_hub_download
-from tqdm import tqdm
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
-def setup_requests_session():
-    """Setup a requests session with retry logic."""
-    session = requests.Session()
-    retries = Retry(
-        total=5,
-        backoff_factor=1,
-        status_forcelist=[500, 502, 503, 504]
-    )
-    session.mount('https://', HTTPAdapter(max_retries=retries))
-    return session
-
-def download_model(repo_id, filename, local_dir):
-    """Download a model from Hugging Face with progress bar and retry logic."""
-    try:
-        print(f"\nDownloading {filename} to {local_dir}...")
-        session = setup_requests_session()
+    # Function to format size
+    format_size() {
+        local size=$1
+        if [ $size -ge 1073741824 ]; then
+            echo "$(echo "scale=2; $size/1073741824" | bc) GB"
+        elif [ $size -ge 1048576 ]; then
+            echo "$(echo "scale=2; $size/1048576" | bc) MB"
+        else
+            echo "$(echo "scale=2; $size/1024" | bc) KB"
+        fi
+    }
+    
+    # Function to download with progress
+    download_model() {
+        local url=$1
+        local output=$2
+        local filename=$(basename "$output")
+        local dir=$(dirname "$output")
+        
+        log "Downloading ${filename}..." "$BLUE"
+        
+        # Create directory if it doesn't exist
+        mkdir -p "$dir"
         
         # Get file size first
-        try:
-            response = session.head(f"https://huggingface.co/{repo_id}/resolve/main/{filename}")
-            total_size = int(response.headers.get('content-length', 0))
-            print(f"File size: {total_size / (1024*1024*1024):.2f} GB")
-        except Exception as e:
-            print(f"Warning: Could not get file size: {e}")
-            total_size = None
-
-        # Download with progress bar
-        local_path = hf_hub_download(
-            repo_id=repo_id,
-            filename=filename,
-            local_dir=local_dir,
-            local_dir_use_symlinks=False,
-            resume_download=True,
-            force_download=True,
-            token=None,  # Use anonymous access
-            max_retries=5,
-            retry_on_error=True
-        )
+        local size=$(curl -sI "$url" | grep -i content-length | awk '{print $2}' | tr -d '\r')
+        if [ ! -z "$size" ]; then
+            log "File size: $(format_size $size)" "$YELLOW"
+        fi
         
-        # Verify file exists and has size
-        if os.path.exists(local_path):
-            size = os.path.getsize(local_path)
-            print(f"✅ Successfully downloaded {filename} ({size / (1024*1024*1024):.2f} GB)")
-            return True
-        else:
-            print(f"❌ File not found after download: {local_path}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Failed to download {filename}: {str(e)}")
-        return False
-
-def main():
-    """Download all required models."""
-    repo_id = "Comfy-Org/Wan_2.1_ComfyUI_repackaged"
-    
-    models = [
-        {
-            "dir": "vae",
-            "file": "split_files/vae/wan_2.1_vae.safetensors"
-        },
-        {
-            "dir": "clip_vision",
-            "file": "split_files/clip_vision/clip_vision_h.safetensors"
-        },
-        {
-            "dir": "text_encoders",
-            "file": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-        },
-        {
-            "dir": "diffusion_models",
-            "file": "split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
-        }
-    ]
-    
-    print("\n" + "="*80)
-    print("WAN 2.1 MODEL DOWNLOAD")
-    print("="*80)
-    print(f"Total files to download: {len(models)}")
-    print("Files to download:")
-    for i, model in enumerate(models, 1):
-        print(f"{i}. {model['file']} -> {model['dir']}")
-    print("="*80 + "\n")
-    
-    # Download each model with retry logic
-    for i, model in enumerate(models, 1):
-        dir_name = model["dir"]
-        file_name = model["file"]
-        local_dir = os.path.join("..", "models", dir_name)
+        # Download with wget showing progress
+        if command -v wget &> /dev/null; then
+            wget --progress=bar:force:noscroll \
+                 --no-check-certificate \
+                 --retry-connrefused \
+                 --retry-on-http-error=503 \
+                 --tries=5 \
+                 --continue \
+                 --timeout=60 \
+                 --waitretry=30 \
+                 -O "$output" "$url" 2>&1
+        else
+            # Fallback to curl if wget is not available
+            curl -L \
+                 --retry 5 \
+                 --retry-delay 30 \
+                 --retry-max-time 3600 \
+                 --continue-at - \
+                 -o "$output" "$url" 2>&1
+        fi
         
-        print(f"\n[{i}/{len(models)}] Downloading {file_name} to {dir_name}...")
-        max_retries = 3
-        retry_count = 0
+        # Check if download was successful
+        if [ $? -eq 0 ] && [ -f "$output" ]; then
+            local downloaded_size=$(stat -f %z "$output" 2>/dev/null || stat -c %s "$output" 2>/dev/null)
+            log "✅ Successfully downloaded ${filename} ($(format_size $downloaded_size))" "$GREEN"
+            return 0
+        else
+            log "❌ Failed to download ${filename}" "$RED" "ERROR"
+            return 1
+        fi
+    }
+    
+    # Define models to download
+    declare -A models=(
+        ["vae"]="split_files/vae/wan_2.1_vae.safetensors"
+        ["clip_vision"]="split_files/clip_vision/clip_vision_h.safetensors"
+        ["text_encoders"]="split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+        ["diffusion_models"]="split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
+    )
+    
+    log "Total files to download: ${#models[@]}" "$YELLOW"
+    log "Files to download:" "$YELLOW"
+    local i=1
+    for dir in "${!models[@]}"; do
+        log "${i}. ${models[$dir]} -> ${dir}" "$YELLOW"
+        i=$((i + 1))
+    done
+    
+    # Download each model
+    local success=true
+    i=1
+    for dir in "${!models[@]}"; do
+        local file="${models[$dir]}"
+        local output="${COMFYUI_DIR}/models/${dir}/$(basename "$file")"
+        local url="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/${file}"
         
-        while retry_count < max_retries:
-            if download_model(repo_id, file_name, local_dir):
+        log "[${i}/${#models[@]}] Downloading to ${dir}..." "$BLUE"
+        
+        # Try download up to 3 times
+        local retry_count=0
+        local max_retries=3
+        
+        while [ $retry_count -lt $max_retries ]; do
+            if download_model "$url" "$output"; then
                 break
-            retry_count += 1
-            if retry_count < max_retries:
-                print(f"Retrying download (attempt {retry_count + 1}/{max_retries})...")
-                time.sleep(30)  # Wait 30 seconds before retry
-            else:
-                print(f"❌ Failed to download {file_name} after {max_retries} attempts")
-                sys.exit(1)
+            fi
+            
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -lt $max_retries ]; then
+                log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
+                sleep 30
+            else
+                log "Failed to download after ${max_retries} attempts" "$RED" "ERROR"
+                success=false
+            fi
+        done
+        
+        i=$((i + 1))
+    done
     
-    print("\n✅ All downloads completed successfully!")
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"❌ Fatal error: {e}")
-        sys.exit(1)
-EOF
-    
-    # Make the script executable
-    chmod +x download_models.py
-    
-    # Run the download script with increased timeout (60 minutes)
-    log "Starting model download process..." "$GREEN"
-    log "This may take a while. The models are large files..." "$YELLOW" "WARNING"
-    log "Downloading WAN 2.1 models (several GB in size)..." "$YELLOW" "WARNING"
-    log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
-    log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$GREEN"
-    
-    # Run the Python script with output redirection and debug mode
-    # Increased timeout to 3600 seconds (60 minutes) and added more retries
-    if ! run_command "PYTHONUNBUFFERED=1 python3 -u download_models.py" "Model download failed" 3600 5 30; then
-        log "Model download failed. Check model_download_progress.log for details" "$RED" "ERROR"
-        error_exit "Model download failed"
+    if [ "$success" = true ]; then
+        log "All downloads completed successfully!" "$GREEN"
+    else
+        error_exit "Some downloads failed"
     fi
     
     # Verify downloads with detailed logging
