@@ -555,7 +555,7 @@ install_extensions() {
     # List of extensions to install with their correct repository URLs
     declare -A extensions=(
         ["Kosinkadink/ComfyUI-Advanced-ControlNet"]="https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet"
-        ["cubiq/ComfyUI-InstantID"]="https://github.com/cubiq/ComfyUI-InstantID.git"
+        ["cubiq/ComfyUI-InstantID"]="https://github.com/cubiq/ComfyUI_InstantID"
     )
     
     for ext_name in "${!extensions[@]}"; do
@@ -574,6 +574,27 @@ install_extensions() {
         if clone_repo "$repo_url" "$ext_dir"; then
             log "✅ Successfully installed $(basename "$ext_name")" "$GREEN"
             
+            # Special handling for ComfyUI-InstantID
+            if [[ "$ext_name" == *"ComfyUI-InstantID"* ]]; then
+                log "Setting up ComfyUI-InstantID requirements..." "$BLUE"
+                
+                # Install required dependencies
+                log "Installing insightface, onnxruntime, and onnxruntime-gpu..." "$BLUE"
+                run_command "pip install insightface onnxruntime onnxruntime-gpu" "Failed to install ComfyUI-InstantID dependencies" || \
+                    log "Some ComfyUI-InstantID dependencies failed to install" "$YELLOW" "WARNING"
+                
+                # Create required model directories
+                log "Creating model directories for ComfyUI-InstantID..." "$BLUE"
+                mkdir -p "$COMFYUI_DIR/models/insightface/models/antelopev2" || \
+                    log "Failed to create insightface model directory" "$YELLOW" "WARNING"
+                mkdir -p "$COMFYUI_DIR/models/instantid" || \
+                    log "Failed to create instantid model directory" "$YELLOW" "WARNING"
+                
+                log "Note: You need to manually download and place the following models:" "$YELLOW" "WARNING"
+                log "1. InsightFace antelopev2 model in $COMFYUI_DIR/models/insightface/models/antelopev2" "$YELLOW" "WARNING"
+                log "2. InstantID model in $COMFYUI_DIR/models/instantid" "$YELLOW" "WARNING"
+            fi
+            
             # Install extension dependencies if requirements.txt exists
             if [ -f "$ext_dir/requirements.txt" ]; then
                 log "Installing dependencies for $(basename "$ext_name")..." "$BLUE"
@@ -590,9 +611,25 @@ install_extensions() {
                 log "Attempting alternative installation method for ComfyUI-InstantID..." "$YELLOW" "WARNING"
                 
                 # Try alternative repository URL
-                local alt_repo_url="https://github.com/cubiq/ComfyUI-InstantID.git"
+                local alt_repo_url="https://github.com/cubiq/ComfyUI_InstantID"
                 if clone_repo "$alt_repo_url" "$ext_dir"; then
                     log "✅ Successfully installed ComfyUI-InstantID using alternative method" "$GREEN"
+                    
+                    # Install required dependencies
+                    log "Installing insightface, onnxruntime, and onnxruntime-gpu..." "$BLUE"
+                    run_command "pip install insightface onnxruntime onnxruntime-gpu" "Failed to install ComfyUI-InstantID dependencies" || \
+                        log "Some ComfyUI-InstantID dependencies failed to install" "$YELLOW" "WARNING"
+                    
+                    # Create required model directories
+                    log "Creating model directories for ComfyUI-InstantID..." "$BLUE"
+                    mkdir -p "$COMFYUI_DIR/models/insightface/models/antelopev2" || \
+                        log "Failed to create insightface model directory" "$YELLOW" "WARNING"
+                    mkdir -p "$COMFYUI_DIR/models/instantid" || \
+                        log "Failed to create instantid model directory" "$YELLOW" "WARNING"
+                    
+                    log "Note: You need to manually download and place the following models:" "$YELLOW" "WARNING"
+                    log "1. InsightFace antelopev2 model in $COMFYUI_DIR/models/insightface/models/antelopev2" "$YELLOW" "WARNING"
+                    log "2. InstantID model in $COMFYUI_DIR/models/instantid" "$YELLOW" "WARNING"
                     
                     # Install dependencies
                     if [ -f "$ext_dir/requirements.txt" ]; then
