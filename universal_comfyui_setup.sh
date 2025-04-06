@@ -358,6 +358,50 @@ check_system_compatibility() {
     log "System compatibility check passed!" "$GREEN"
 }
 
+# Function to install ComfyUI extensions
+install_extensions() {
+    log "Installing ComfyUI extensions..." "$GREEN"
+    
+    # Create custom nodes directory
+    mkdir -p "$COMFYUI_DIR/custom_nodes" || error_exit "Failed to create custom_nodes directory"
+    
+    # Define extensions to install
+    declare -A extensions=(
+        ["ComfyUI-Impact-Pack"]="https://github.com/ltdrdata/ComfyUI-Impact-Pack"
+        ["ComfyUI-Advanced-ControlNet"]="https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet"
+        ["ComfyUI-Image-Selector"]="https://github.com/space-nuko/ComfyUI-Image-Selector"
+        ["ComfyUI-InstantID"]="https://github.com/cubiq/ComfyUI-InstantID"
+        ["ComfyUI-IPAdapter-Plus"]="https://github.com/laksjdjf/ComfyUI-IPAdapter-Plus"
+    )
+    
+    # Install each extension
+    for name in "${!extensions[@]}"; do
+        local repo_url="${extensions[$name]}"
+        log "Installing extension: $name" "$BLUE"
+        
+        # Skip if already installed
+        if [ -d "$COMFYUI_DIR/custom_nodes/$name" ]; then
+            log "$name is already installed" "$GREEN"
+            continue
+        fi
+        
+        # Try git clone
+        if ! run_command "git clone --depth 1 \"$repo_url\" \"$COMFYUI_DIR/custom_nodes/$name\"" "Failed to clone $name"; then
+            log "Failed to install $name" "$YELLOW" "WARNING"
+            continue
+        fi
+        
+        # Install Python dependencies if requirements.txt exists
+        if [ -f "$COMFYUI_DIR/custom_nodes/$name/requirements.txt" ]; then
+            log "Installing dependencies for $name..." "$BLUE"
+            run_command "pip install -r \"$COMFYUI_DIR/custom_nodes/$name/requirements.txt\"" "Failed to install dependencies for $name" || \
+                log "Some dependencies for $name failed to install" "$YELLOW" "WARNING"
+        fi
+    done
+    
+    log "Extension installation completed" "$GREEN"
+}
+
 # Main setup function
 main() {
     log "Starting ComfyUI setup..." "$GREEN"
@@ -565,6 +609,9 @@ EOF
     else
         error_exit "start_comfyui.sh not found"
     fi
+    
+    # Install extensions after ComfyUI setup
+    install_extensions
     
     log "ComfyUI setup completed successfully!" "$GREEN"
     log "Access URL: http://$(hostname -I | awk '{print $1}'):8188" "$GREEN"
