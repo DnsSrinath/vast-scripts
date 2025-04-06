@@ -67,6 +67,50 @@ These plugins provide additional nodes specifically designed for SDXL 2.1 workfl
 - Enhanced SDXL prompting capabilities
 - SDXL-specific image processing nodes
 
+## WAN 2.1 Image-to-Video Workflow
+To run WAN 2.1 image-to-video workflows, you'll need to install the following plugin and models:
+
+```bash
+# Change to the custom nodes directory
+cd /opt/workspace-internal/ComfyUI/custom_nodes
+
+# Install ComfyUI-WAN
+git clone https://github.com/Kosinkadink/ComfyUI-WAN.git
+cd ComfyUI-WAN
+pip install -r requirements.txt
+cd ..
+
+# Create model directories
+mkdir -p /opt/workspace-internal/ComfyUI/models/vae
+mkdir -p /opt/workspace-internal/ComfyUI/models/clip_vision
+mkdir -p /opt/workspace-internal/ComfyUI/models/text_encoders
+mkdir -p /opt/workspace-internal/ComfyUI/models/diffusion_models
+
+# Download required models
+wget -O /opt/workspace-internal/ComfyUI/models/vae/wan_2.1_vae.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan_2.1_vae.safetensors
+wget -O /opt/workspace-internal/ComfyUI/models/clip_vision/clip_vision_h.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/clip_vision_h.safetensors
+wget -O /opt/workspace-internal/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors https://huggingface.co/Kosinkadink/wan/resolve/main/wan2.1_t2v_1.3B_fp16.safetensors
+
+# Restart ComfyUI to load the new plugin
+pkill -f "python3.*main.py.*--port 8188"
+cd /workspace
+./vast-scripts/vast-scripts/vast_startup.sh
+```
+
+**WAN 2.1 Features:**
+- High-quality image-to-video generation
+- Text-to-video capabilities
+- Advanced motion control
+- Improved temporal consistency
+- Support for various video formats
+
+**Workflow Tips:**
+- Use the WAN 2.1 Image to Video node for basic image-to-video conversion
+- Adjust the motion strength parameter to control the amount of movement
+- Use the WAN 2.1 Text to Video node for generating videos from text prompts
+- Combine with ControlNet for more precise control over the generated videos
+
 ## Lip-Sync Workflow Requirements
 To run lip-sync workflows using Latent Sync, you'll need to install the following plugin:
 
