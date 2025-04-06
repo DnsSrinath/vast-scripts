@@ -36,6 +36,69 @@ The startup script automatically installs the following plugins (if not already 
 - **VideoHelperSuite**: For video operations
 - **Impact Pack**: For additional nodes and functionality
 
+## SDXL 2.1 Workflow Requirements
+To run SDXL 2.1 workflows, you'll need the following additional plugins:
+
+```bash
+# Change to the custom nodes directory
+cd /opt/workspace-internal/ComfyUI/custom_nodes
+
+# Install ComfyUI-Advanced-ControlNet
+git clone https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git
+cd ComfyUI-Advanced-ControlNet
+pip install -r requirements.txt
+cd ..
+
+# Install ComfyUI-Advanced-SDXL
+git clone https://github.com/Kosinkadink/ComfyUI-Advanced-SDXL.git
+cd ComfyUI-Advanced-SDXL
+pip install -r requirements.txt
+cd ..
+
+# Restart ComfyUI to load the new plugins
+pkill -f "python3.*main.py.*--port 8188"
+cd /workspace
+./vast-scripts/vast-scripts/vast_startup.sh
+```
+
+These plugins provide additional nodes specifically designed for SDXL 2.1 workflows, including:
+- Advanced SDXL samplers and schedulers
+- SDXL-specific control methods
+- Enhanced SDXL prompting capabilities
+- SDXL-specific image processing nodes
+
+## Lip-Sync Workflow Requirements
+To run lip-sync workflows using Latent Sync, you'll need to install the following plugin:
+
+```bash
+# Change to the custom nodes directory
+cd /opt/workspace-internal/ComfyUI/custom_nodes
+
+# Install ComfyUI-LatentSyncWrapper
+git clone https://github.com/ShmuelRonen/ComfyUI-LatentSyncWrapper.git
+cd ComfyUI-LatentSyncWrapper
+pip install -r requirements.txt
+cd ..
+
+# Create necessary directories
+mkdir -p /opt/workspace-internal/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/whisper
+
+# Download required model files
+wget -O /opt/workspace-internal/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/latentsync_unet.pt https://huggingface.co/ShmuelRonen/latentsync/resolve/main/latentsync_unet.pt
+wget -O /opt/workspace-internal/ComfyUI/custom_nodes/ComfyUI-LatentSyncWrapper/checkpoints/whisper/tiny.pt https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt
+
+# Restart ComfyUI to load the new plugin
+pkill -f "python3.*main.py.*--port 8188"
+cd /workspace
+./vast-scripts/vast-scripts/vast_startup.sh
+```
+
+**Known Limitations:**
+- Works best with clear, frontal face videos
+- Doesn't support anime/cartoon faces yet
+- Input video must be 25 FPS (automatically converted if needed)
+- Ensure the face is visible throughout the video
+
 ## Usage
 1. Create a new instance on Vast.ai using the ComfyUI template
 2. Copy the contents of `vast_startup.sh` to the "On-start Script" field
@@ -61,6 +124,28 @@ find vast-scripts -name "vast_startup.sh"
 chmod +x vast-scripts/vast-scripts/vast_startup.sh
 
 # Run the startup script
+./vast-scripts/vast-scripts/vast_startup.sh
+```
+
+## Updating ComfyUI
+If your ComfyUI version is not the latest, you can update it using the following commands:
+
+```bash
+# Change to the ComfyUI directory
+cd /opt/workspace-internal/ComfyUI
+
+# Check current version
+python3 -c "import comfy; print(comfy.__version__)"
+
+# Update ComfyUI to the latest version
+git pull origin master
+
+# If you need a specific version
+git checkout v0.3.13
+
+# Restart ComfyUI after updating
+pkill -f "python3.*main.py.*--port 8188"
+cd /workspace
 ./vast-scripts/vast-scripts/vast_startup.sh
 ```
 
