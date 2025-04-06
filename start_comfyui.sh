@@ -36,9 +36,25 @@ if is_process_running "python3.*main.py"; then
     exit 0
 fi
 
-# Check for NVIDIA GPU
+# Function to check CUDA compatibility
+check_cuda_compatibility() {
+    python3 -c "
+import torch
+try:
+    if torch.cuda.is_available():
+        torch.cuda.init()
+        return True
+    return False
+except Exception as e:
+    print(f'CUDA Error: {str(e)}')
+    return False
+" 2>/dev/null
+}
+
+# Try to use CUDA first
+USE_CUDA=false
 if command -v nvidia-smi &> /dev/null; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] NVIDIA GPU detected"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] NVIDIA GPU detected, attempting to use CUDA..."
     
     # Set CUDA environment variables
     export CUDA_HOME=/usr/local/cuda
@@ -49,21 +65,36 @@ if command -v nvidia-smi &> /dev/null; then
     CUDA_DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA Driver Version: $CUDA_DRIVER_VERSION"
     
-    # Install CUDA toolkit if needed
+    # Try to install CUDA toolkit if needed
     if ! command -v nvcc &> /dev/null; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing CUDA toolkit..."
         apt-get update && apt-get install -y cuda-toolkit-12-0 || \
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA toolkit installation failed, continuing..." >&2
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA toolkit installation failed, will try CPU mode" >&2
     fi
     
-    # Install PyTorch with CUDA support if needed
-    if ! python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing PyTorch with CUDA support..."
-        pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 || \
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] PyTorch CUDA installation failed" >&2
+    # Install PyTorch with CUDA support
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing PyTorch with CUDA support..."
+    pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 || \
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] PyTorch CUDA installation failed, will try CPU mode" >&2
+    
+    # Check if CUDA is working
+    if check_cuda_compatibility; then
+        USE_CUDA=true
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA is working, will use GPU mode"
+    else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA initialization failed, falling back to CPU mode" >&2
+        export CUDA_VISIBLE_DEVICES=""
     fi
 else
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] No NVIDIA GPU detected, running in CPU mode" >&2
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] No NVIDIA GPU detected, using CPU mode" >&2
+    export CUDA_VISIBLE_DEVICES=""
+fi
+
+# If CUDA failed, install CPU version of PyTorch
+if [ "$USE_CUDA" = false ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Installing PyTorch CPU version..."
+    pip3 install torch torchvision torchaudio || \
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] PyTorch installation failed" >&2
 fi
 
 # Check and terminate existing ComfyUI processes
@@ -132,8 +163,14 @@ if [ ! -f "main.py" ]; then
     exit 1
 fi
 
-# Start ComfyUI
-nohup python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+# Start ComfyUI with appropriate device
+if [ "$USE_CUDA" = true ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ComfyUI with CUDA support..."
+    nohup python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+else
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ComfyUI in CPU mode..."
+    CUDA_VISIBLE_DEVICES="" nohup python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+fi
 
 # Wait for ComfyUI to start
 sleep 5
