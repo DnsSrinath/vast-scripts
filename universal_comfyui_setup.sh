@@ -1688,15 +1688,12 @@ initialize_model_sizes() {
     return 0
 }
 
-# Function to verify model file integrity
-#!/bin/bash
-
 # Function to verify model file integrity - completely fixed version
 verify_model_file() {
     local file_path="$1"
     local expected_size="$2"
     local model_name=""
-    local file_size="0"
+    local file_size=0
     local is_valid=false
     
     # Validate parameters
@@ -1707,10 +1704,19 @@ verify_model_file() {
     
     # Get model name and file size
     model_name=$(basename "$file_path")
-    file_size=$(get_file_size "$file_path")
     
-    # Check if file is empty
-    if [ "$file_size" = "0" ]; then
+    # Get file size using multiple methods to ensure reliability
+    if command -v stat &> /dev/null; then
+        # Try BSD stat first
+        file_size=$(stat -f %z "$file_path" 2>/dev/null || echo "0")
+        # If that failed, try GNU stat
+        if [ "$file_size" = "0" ]; then
+            file_size=$(stat -c %s "$file_path" 2>/dev/null || echo "0")
+        fi
+    fi
+    
+    # If stat failed, try wc -c
+    if [ "$file_size" = "0" ] && command -v wc &> /dev/null; then
         log "❌ File $model_name is empty" "$RED" "ERROR"
         return 1
     fi
