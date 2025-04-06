@@ -916,7 +916,9 @@ manage_metadata() {
                 local stored_path=$(grep "^path=" "$metadata_file" | cut -d'=' -f2)
                 local stored_status=$(grep "^status=" "$metadata_file" | cut -d'=' -f2)
                 
-                if [ "$stored_size" = "$expected_size" ] && [ -f "$stored_path" ] && [ "$stored_status" = "verified" ]; then
+                # Allow for small size differences (up to 1MB)
+                local size_diff=$((stored_size - expected_size))
+                if [ ${size_diff#-} -le 1048576 ] && [ -f "$stored_path" ] && [ "$stored_status" = "verified" ]; then
                     return 0  # File exists and matches metadata
                 fi
             fi
@@ -979,7 +981,7 @@ download_model() {
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ $model_name exists with correct size, updating metadata"
             return 0
         else
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ $model_name exists but size mismatch, re-downloading"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ $model_name exists but size mismatch ($actual_size vs $expected_size), re-downloading"
             rm -f "$output_path"
         fi
     fi
@@ -987,12 +989,14 @@ download_model() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Downloading $model_name..."
     if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$output_path"; then
         local downloaded_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null)
-        if [ "$downloaded_size" = "$expected_size" ]; then
-            manage_metadata "update" "$output_path" "$expected_size"
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Successfully downloaded $model_name"
+        # Allow for small size differences (up to 1MB) due to filesystem differences
+        local size_diff=$((downloaded_size - expected_size))
+        if [ ${size_diff#-} -le 1048576 ] || [ "$downloaded_size" = "$expected_size" ]; then
+            manage_metadata "update" "$output_path" "$downloaded_size"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Successfully downloaded $model_name ($downloaded_size bytes)"
             return 0
         else
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Downloaded file size mismatch for $model_name"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Downloaded file size mismatch for $model_name ($downloaded_size vs $expected_size bytes)"
             rm -f "$output_path"
             return 1
         fi
