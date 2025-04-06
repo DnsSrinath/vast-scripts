@@ -55,10 +55,10 @@ ls -la /workspace/vast-scripts
 find /workspace/vast-scripts -name "vast_startup.sh"
 
 # Make the script executable (use the correct path from the find command)
-chmod +x /workspace/vast-scripts/vast_startup.sh
+chmod +x /workspace/vast-scripts/vast-scripts/vast_startup.sh
 
 # Run the startup script
-/workspace/vast-scripts/vast_startup.sh
+/workspace/vast-scripts/vast-scripts/vast_startup.sh
 ```
 
 If you can't find the script, you can create it manually:
