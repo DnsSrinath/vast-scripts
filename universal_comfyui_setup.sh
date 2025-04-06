@@ -251,9 +251,11 @@ prepare_system() {
     
     # Upgrade pip with retry logic
     if command -v pip3 &> /dev/null; then
+        log "Upgrading pip to latest version..." "$GREEN"
         run_command "pip3 install --upgrade pip" "Failed to upgrade pip" 120 3 5 || \
             log "Pip upgrade failed, continuing..." "$YELLOW" "WARNING"
     elif command -v python3 &> /dev/null; then
+        log "Upgrading pip to latest version..." "$GREEN"
         run_command "python3 -m pip install --upgrade pip" "Failed to upgrade pip" 120 3 5 || \
             log "Pip upgrade failed, continuing..." "$YELLOW" "WARNING"
     else
@@ -347,13 +349,21 @@ check_system_compatibility() {
             log "CUDA driver/library version mismatch detected" "$YELLOW" "WARNING"
             log "Attempting to fix CUDA driver..." "$YELLOW" "WARNING"
             
-            # Try to reinstall NVIDIA drivers
-            run_command "apt-get update && apt-get install -y --reinstall nvidia-driver-535" "Failed to reinstall NVIDIA drivers" || \
-                log "NVIDIA driver reinstallation failed" "$YELLOW" "WARNING"
+            # Try to fix NVIDIA driver without full reinstall
+            run_command "apt-get update" "Failed to update package lists" || \
+                log "Package list update failed" "$YELLOW" "WARNING"
             
-            # Try to load NVIDIA kernel module
+            # Try to load NVIDIA kernel module first
             run_command "modprobe nvidia" "Failed to load NVIDIA kernel module" || \
                 log "Failed to load NVIDIA kernel module" "$YELLOW" "WARNING"
+            
+            # Try to install NVIDIA driver without reinstall
+            run_command "apt-get install -y nvidia-driver-535" "Failed to install NVIDIA drivers" || \
+                log "NVIDIA driver installation failed" "$YELLOW" "WARNING"
+            
+            # Try to restart NVIDIA services
+            run_command "systemctl restart nvidia-persistenced" "Failed to restart NVIDIA services" || \
+                log "Failed to restart NVIDIA services" "$YELLOW" "WARNING"
             
             # Check if CUDA is available after fixes
             if ! python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
