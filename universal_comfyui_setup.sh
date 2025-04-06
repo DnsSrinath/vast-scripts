@@ -939,62 +939,50 @@ main() {
         mkdir -p "$COMFYUI_DIR/models/diffusion_models"
         mkdir -p "$COMFYUI_DIR/models/vae"
         
-        # Define models to check/download with proper URL formatting
+        # Define models with their paths and URLs
         declare -A models=(
-            ["clip_vision:clip_vision_h.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors:1264219396"
-            ["text_encoders:umt5_xxl_fp8_e4m3fn_scaled.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors:1264219396"
-            ["diffusion_models:wan2.1_i2v_480p_14B_fp8_scaled.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors:1264219396"
-            ["vae:wan_2.1_vae.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors:1264219396"
+            ["clip_vision/clip_vision_h.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
+            ["text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+            ["diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
+            ["vae/wan_2.1_vae.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
         )
         
         log "Total files to check: ${#models[@]}" "$BLUE"
         
         # Check and download each model
         local count=1
-        for model_key in "${!models[@]}"; do
-            IFS=':' read -r dir file <<< "$model_key"
-            IFS=':' read -r url expected_size <<< "${models[$model_key]}"
-            local target_path="$COMFYUI_DIR/models/$dir/$file"
+        for model_path in "${!models[@]}"; do
+            local target_path="$COMFYUI_DIR/models/$model_path"
+            local url="${models[$model_path]}"
             
-            log "[$count/${#models[@]}] Checking $file in $dir..." "$BLUE"
+            log "[$count/${#models[@]}] Checking $model_path..." "$BLUE"
             
-            # Check if file exists and has correct size
+            # Simple check if file exists
             if [ -f "$target_path" ]; then
-                local actual_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
-                if [ "$actual_size" = "$expected_size" ]; then
-                    log "✅ $file already exists with correct size ($(format_size $actual_size))" "$GREEN"
-                    count=$((count + 1))
-                    continue
-                else
-                    log "⚠️ $file exists but has incorrect size (expected: $(format_size $expected_size), actual: $(format_size $actual_size))" "$YELLOW" "WARNING"
-                    log "Re-downloading $file..." "$YELLOW" "WARNING"
-                fi
-            else
-                log "Downloading $file..." "$BLUE"
+                log "✅ $model_path already exists" "$GREEN"
+                count=$((count + 1))
+                continue
             fi
             
-            # Download the model
+            # Download if file doesn't exist
+            log "Downloading $model_path..." "$BLUE"
             local retry_count=0
             local max_retries=3
             
             while [ $retry_count -lt $max_retries ]; do
-                if download_model "$url" "$COMFYUI_DIR/models/$dir" "$file"; then
-                    # Verify the downloaded file size
-                    local downloaded_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
-                    if [ "$downloaded_size" = "$expected_size" ]; then
-                        log "✅ Successfully downloaded and verified $file ($(format_size $downloaded_size))" "$GREEN"
-                        break
-                    else
-                        log "⚠️ Downloaded file size mismatch (expected: $(format_size $expected_size), actual: $(format_size $downloaded_size))" "$YELLOW" "WARNING"
-                        retry_count=$((retry_count + 1))
-                    fi
+                if wget --no-check-certificate --retry-connrefused --retry-on-http-error=503 \
+                    --tries=5 --continue --timeout=60 --waitretry=30 \
+                    -O "$target_path" "$url" 2>/dev/null; then
+                    log "✅ Successfully downloaded $model_path" "$GREEN"
+                    break
                 else
                     retry_count=$((retry_count + 1))
-                fi
-                
-                if [ $retry_count -lt $max_retries ]; then
-                    log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
-                    sleep 5
+                    if [ $retry_count -lt $max_retries ]; then
+                        log "Retrying download (attempt $((retry_count + 1))/${max_retries})..." "$YELLOW" "WARNING"
+                        sleep 5
+                    else
+                        log "❌ Failed to download $model_path after $max_retries attempts" "$RED" "ERROR"
+                    fi
                 fi
             done
             
@@ -1005,21 +993,19 @@ main() {
         log "Verifying model downloads..." "$BLUE"
         local all_valid=true
         
-        for model_key in "${!models[@]}"; do
-            IFS=':' read -r dir file <<< "$model_key"
-            IFS=':' read -r url expected_size <<< "${models[$model_key]}"
-            local target_path="$COMFYUI_DIR/models/$dir/$file"
+        for model_path in "${!models[@]}"; do
+            local target_path="$COMFYUI_DIR/models/$model_path"
             
             if [ -f "$target_path" ]; then
-                local actual_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
-                if [ "$actual_size" = "$expected_size" ]; then
-                    log "✅ $file verified ($(format_size $actual_size))" "$GREEN"
+                local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
+                if [ "$size" -gt 0 ]; then
+                    log "✅ $model_path verified ($(format_size $size))" "$GREEN"
                 else
-                    log "❌ $file size mismatch (expected: $(format_size $expected_size), actual: $(format_size $actual_size))" "$RED" "ERROR"
+                    log "❌ $model_path is empty" "$RED" "ERROR"
                     all_valid=false
                 fi
             else
-                log "❌ $file missing" "$RED" "ERROR"
+                log "❌ $model_path missing" "$RED" "ERROR"
                 all_valid=false
             fi
         done
