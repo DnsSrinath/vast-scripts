@@ -335,11 +335,20 @@ install_comfyui() {
 # Download models with verification and robust error handling
 download_model() {
     local model_path="$1"
-    local model_url="${MODELS[$model_path]%:*}"
-    local expected_size="${MODELS[$model_path]#*:}"
+    local model_info="${MODELS[$model_path]}"
+    
+    # Extract URL and expected size using cut
+    local model_url=$(echo "$model_info" | cut -d':' -f1)
+    local expected_size=$(echo "$model_info" | cut -d':' -f2)
+    
     local target_path="$COMFYUI_DIR/models/$model_path"
     local model_name=$(basename "$model_path")
     local temp_file="${TEMP_DIR}/${model_name}.tmp"
+    
+    # Log the URL for debugging
+    log "Processing model: $model_path" "$BLUE"
+    log "URL: $model_url" "$BLUE"
+    log "Expected size: $expected_size" "$BLUE"
     
     # Check if model is already marked as downloaded in status
     if [ "$(get_model_status "$model_path")" = "true" ]; then
