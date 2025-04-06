@@ -1074,17 +1074,22 @@ manage_metadata() {
 
 # Function to download a model with metadata tracking
 download_model() {
+    # Initialize all variables at the beginning
     local url="$1"
     local output_path="$2"
     local expected_size="$3"
-    local model_name=$(basename "$output_path")
-    local temp_file="${output_path}.tmp"
+    local model_name=""
+    local temp_file=""
     
-    # Validate parameters
+    # Validate parameters first
     if [ -z "$url" ] || [ -z "$output_path" ]; then
         log "Invalid parameters for download_model: url or output_path is empty" "$RED" "ERROR"
         return 1
     fi
+    
+    # Now initialize derived variables
+    model_name=$(basename "$output_path")
+    temp_file="${output_path}.tmp"
     
     # Create directory if it doesn't exist
     mkdir -p "$(dirname "$output_path")" || {
