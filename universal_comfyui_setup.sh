@@ -1442,6 +1442,50 @@ check_cuda_compatibility() {
     fi
 }
 
+# Function to download WAN 2.1 models
+download_wan_models() {
+    local model_name=""
+    local output_path=""
+    local url=""
+    local size=""
+    local current_status=""
+    
+    # Initialize metadata system
+    initialize_metadata
+    
+    log "Checking WAN 2.1 models..." "$BLUE"
+    
+    # First verify all existing files
+    log "Verifying existing model files..." "$BLUE"
+    for model_info in "${MODELS[@]}"; do
+        IFS=':' read -r path size url <<< "$model_info"
+        output_path="/workspace/ComfyUI/models/$path"
+        model_name=$(basename "$path")
+        
+        # Get current status
+        current_status=$(manage_metadata "status" "$output_path" "$size")
+        log "Status for $model_name: $current_status" "$BLUE"
+        
+        if [ -f "$output_path" ]; then
+            if ! manage_metadata "verify" "$output_path"; then
+                log "⚠️ $model_name exists but is invalid, will re-download" "$YELLOW" "WARNING"
+                rm -f "$output_path"
+            fi
+        fi
+    done
+
+    # Then download missing or invalid files
+    log "Downloading missing or invalid models..." "$BLUE"
+    for model_info in "${MODELS[@]}"; do
+        IFS=':' read -r path size url <<< "$model_info"
+        output_path="/workspace/ComfyUI/models/$path"
+        model_name=$(basename "$path")
+        
+        # Download the model
+        download_model "$url" "$output_path" "$size"
+    done
+}
+
 # Main setup function
 main() {
     log "Starting ComfyUI setup..." "$GREEN"
@@ -1529,39 +1573,8 @@ main() {
     log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
     log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$GREEN"
     
-    # Download WAN 2.1 models with metadata tracking
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Initializing metadata system..."
-    initialize_metadata
-
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking WAN 2.1 models..."
-    # MODELS array is already defined at the top of the script
-
-    # First verify all existing files
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Verifying existing model files..."
-    for model_info in "${MODELS[@]}"; do
-        IFS=':' read -r path size url <<< "$model_info"
-        output_path="/workspace/ComfyUI/models/$path"
-        model_name=$(basename "$path")
-        
-        # Get current status
-        current_status=$(manage_metadata "status" "$output_path" "$size")
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Status for $model_name: $current_status"
-        
-        if [ -f "$output_path" ]; then
-            if ! manage_metadata "verify" "$output_path"; then
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ $model_name exists but is invalid, will re-download"
-                rm -f "$output_path"
-            fi
-        fi
-    done
-
-    # Then download missing or invalid files
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Downloading missing or invalid models..."
-    for model_info in "${MODELS[@]}"; do
-        IFS=':' read -r path size url <<< "$model_info"
-        output_path="/workspace/ComfyUI/models/$path"
-        download_model "$url" "$output_path" "$size"
-    done
+    # Use the download_wan_models function instead of direct download_model calls
+    download_wan_models
     
     # Install extensions after ComfyUI setup
     install_extensions
