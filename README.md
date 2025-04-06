@@ -83,6 +83,30 @@ WAN 2.1 is a series of 4 video generation models:
 - **Visual Text Generation**: WAN 2.1 is the first video model capable of generating both Chinese and English text.
 - **Powerful Video VAE**: WAN-VAE delivers exceptional efficiency and performance, encoding and decoding 1080P videos of any length while preserving temporal information.
 
+### Quick Setup with Dependencies Script
+The easiest way to set up WAN 2.1 is to use the provided dependencies script:
+
+1. Download the script:
+   ```bash
+   wget https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/wan_2.1_dependencies.sh
+   ```
+
+2. Make the script executable:
+   ```bash
+   chmod +x wan_2.1_dependencies.sh
+   ```
+
+3. Run the script:
+   ```bash
+   ./wan_2.1_dependencies.sh
+   ```
+
+The script will:
+- Create or clean the necessary model directories
+- Download all required models from the Comfy-Org repackaged repository (no authentication required)
+- Offer to download additional models (14B versions)
+- Provide instructions for restarting ComfyUI
+
 ### Method 1: Using ComfyUI Manager (Recommended)
 If you already have ComfyUI Manager installed, you can use it to install the WAN plugin:
 
