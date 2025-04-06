@@ -141,19 +141,17 @@ done
 # Create proper extra_model_paths.yaml configuration
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Creating extra_model_paths.yaml configuration..."
 cat > /workspace/ComfyUI/extra_model_paths.yaml << 'EOF'
-{
-  "base_path": "/workspace/ComfyUI",
-  "checkpoints": "models/checkpoints",
-  "configs": "models/configs",
-  "vae": "models/vae",
-  "loras": "models/loras",
-  "upscale_models": "models/upscale_models",
-  "embeddings": "models/embeddings",
-  "hypernetworks": "models/hypernetworks",
-  "controlnet": "models/controlnet",
-  "gligen": "models/gligen",
-  "device_mode": "cpu"
-}
+base_path: /workspace/ComfyUI
+checkpoints: models/checkpoints
+configs: models/configs
+vae: models/vae
+loras: models/loras
+upscale_models: models/upscale_models
+embeddings: models/embeddings
+hypernetworks: models/hypernetworks
+controlnet: models/controlnet
+gligen: models/gligen
+device_mode: cpu
 EOF
 
 # Create a startup script that will be executed when the container starts
@@ -174,7 +172,7 @@ if command -v nvidia-smi &> /dev/null && python3 -c "import torch; print(torch.c
 else
     echo "Starting ComfyUI in CPU mode..."
     cd /workspace/ComfyUI
-    CUDA_VISIBLE_DEVICES="" PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+    CUDA_VISIBLE_DEVICES="" PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 --cpu > comfyui.log 2>&1 &
 fi
 
 # Wait for ComfyUI to start
@@ -221,7 +219,7 @@ if [ "$USE_CUDA" = true ]; then
     nohup python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ComfyUI in CPU mode..."
-    CUDA_VISIBLE_DEVICES="" PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+    CUDA_VISIBLE_DEVICES="" PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 --cpu > comfyui.log 2>&1 &
 fi
 
 # Wait for ComfyUI to start

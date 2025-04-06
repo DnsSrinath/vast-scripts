@@ -555,7 +555,7 @@ install_extensions() {
     # List of extensions to install with their correct repository URLs
     declare -A extensions=(
         ["Kosinkadink/ComfyUI-Advanced-ControlNet"]="https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet"
-        ["cubiq/ComfyUI-InstantID"]="https://github.com/cubiq/ComfyUI-InstantID"
+        ["cubiq/ComfyUI-InstantID"]="https://github.com/cubiq/ComfyUI-InstantID.git"
     )
     
     for ext_name in "${!extensions[@]}"; do
@@ -700,7 +700,7 @@ display_summary() {
         log "  - ComfyUI-Advanced-ControlNet: ❌ Failed" "$RED" "ERROR"
     fi
     
-    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-InstantID" ]; then
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-InstantID" ] && [ -f "$COMFYUI_DIR/custom_nodes/ComfyUI-InstantID/__init__.py" ]; then
         log "  - ComfyUI-InstantID: ✅ Installed" "$GREEN"
     else
         log "  - ComfyUI-InstantID: ❌ Failed" "$RED" "ERROR"
@@ -873,7 +873,11 @@ main() {
         # Check if download was successful
         if [ $? -eq 0 ] && [ -f "$output" ]; then
             local downloaded_size=$(stat -f %z "$output" 2>/dev/null || stat -c %s "$output" 2>/dev/null)
-            log "✅ Successfully downloaded ${filename} ($(format_size $downloaded_size))" "$GREEN"
+            if [ -n "$downloaded_size" ]; then
+                log "✅ Successfully downloaded ${filename} ($(format_size $downloaded_size))" "$GREEN"
+            else
+                log "✅ Successfully downloaded ${filename}" "$GREEN"
+            fi
             return 0
         else
             log "❌ Failed to download ${filename}" "$RED" "ERROR"
