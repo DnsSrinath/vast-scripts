@@ -677,53 +677,129 @@ EOF
     chmod +x "$COMFYUI_DIR/start_with_cuda.sh"
 }
 
+# Function to manage installation plan in metadata
+manage_installation_plan() {
+    local metadata_dir="/workspace/ComfyUI/models/.metadata"
+    local plan_file="$metadata_dir/installation_plan.txt"
+    local status_file="$metadata_dir/installation_status.txt"
+    
+    # Create metadata directory if it doesn't exist
+    mkdir -p "$metadata_dir" || {
+        log "Failed to create metadata directory" "$RED" "ERROR"
+        return 1
+    }
+    
+    # If plan doesn't exist, create it
+    if [ ! -f "$plan_file" ]; then
+        # Create plan file with proper error handling
+        if ! cat > "$plan_file" << 'EOF'
+# ComfyUI Installation Plan
+# Created: $(date '+%Y-%m-%d %H:%M:%S')
+
+1. System Preparation:
+   - Check Python version (>= 3.8.0)
+   - Check CUDA availability
+   - Install required packages
+   - Set up virtual environment
+
+2. ComfyUI Installation:
+   - Clone ComfyUI repository
+   - Install ComfyUI dependencies
+   - Create model directories
+
+3. Model Downloads:
+   - WAN 2.1 Models:
+     * CLIP Vision (clip_vision_h.safetensors)
+     * Text Encoder (umt5_xxl_fp8_e4m3fn_scaled.safetensors)
+     * Diffusion Model (wan2.1_i2v_480p_14B_fp8_scaled.safetensors)
+     * VAE (wan_2.1_vae.safetensors)
+   - Total size: ~22 GB
+   - Will skip existing files with valid metadata
+
+4. Extensions Installation:
+   - ComfyUI-Advanced-ControlNet
+   - ComfyUI-InstantID
+   - ComfyUI-WanVideoWrapper
+
+5. Final Setup:
+   - Create startup script
+   - Configure CUDA settings
+   - Set up auto-start
+EOF
+        then
+            log "Failed to create installation plan file" "$RED" "ERROR"
+            return 1
+        fi
+
+        # Initialize status file with proper error handling
+        if ! cat > "$status_file" << 'EOF'
+# Installation Status
+# Created: $(date '+%Y-%m-%d %H:%M:%S')
+
+1. System Preparation: pending
+2. ComfyUI Installation: pending
+3. Model Downloads: pending
+4. Extensions Installation: pending
+5. Final Setup: pending
+EOF
+        then
+            log "Failed to create installation status file" "$RED" "ERROR"
+            return 1
+        fi
+    fi
+    
+    # Verify files exist before displaying
+    if [ ! -f "$plan_file" ] || [ ! -f "$status_file" ]; then
+        log "Metadata files not found" "$RED" "ERROR"
+        return 1
+    }
+    
+    # Display the plan with proper error handling
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')]            INSTALLATION PLAN                  "
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
+    cat "$plan_file" || {
+        log "Failed to display installation plan" "$RED" "ERROR"
+        return 1
+    }
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')]            PLAN COMPLETE                     "
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
+}
+
+# Function to update installation status
+update_installation_status() {
+    local step="$1"
+    local status="$2"
+    local metadata_dir="/workspace/ComfyUI/models/.metadata"
+    local status_file="$metadata_dir/installation_status.txt"
+    
+    # Verify parameters
+    if [ -z "$step" ] || [ -z "$status" ]; then
+        log "Invalid parameters for update_installation_status" "$RED" "ERROR"
+        return 1
+    }
+    
+    # Check if status file exists
+    if [ ! -f "$status_file" ]; then
+        log "Status file not found" "$RED" "ERROR"
+        return 1
+    }
+    
+    # Update status with proper error handling
+    if ! sed -i "s/^$step: .*/$step: $status/" "$status_file"; then
+        log "Failed to update installation status" "$RED" "ERROR"
+        return 1
+    fi
+}
+
 # Function to display installation plan
 display_plan() {
-    log "=============================================" "$BLUE"
-    log "           INSTALLATION PLAN                  " "$BLUE"
-    log "=============================================" "$BLUE"
-    
-    # System preparation
-    log "1. System Preparation:" "$GREEN"
-    log "   - Check Python version (>= 3.8.0)" "$BLUE"
-    log "   - Check CUDA availability" "$BLUE"
-    log "   - Install required packages" "$BLUE"
-    log "   - Set up virtual environment" "$BLUE"
-    
-    # ComfyUI installation
-    log "2. ComfyUI Installation:" "$GREEN"
-    log "   - Clone ComfyUI repository" "$BLUE"
-    log "   - Install ComfyUI dependencies" "$BLUE"
-    log "   - Create model directories" "$BLUE"
-    
-    # Model downloads
-    log "3. Model Downloads:" "$GREEN"
-    log "   - WAN 2.1 Models:" "$BLUE"
-    log "     * CLIP Vision (clip_vision_h.safetensors)" "$BLUE"
-    log "     * Text Encoder (umt5_xxl_fp8_e4m3fn_scaled.safetensors)" "$BLUE"
-    log "     * Diffusion Model (wan2.1_i2v_480p_14B_fp8_scaled.safetensors)" "$BLUE"
-    log "     * VAE (wan_2.1_vae.safetensors)" "$BLUE"
-    log "   - Total size: ~22 GB" "$BLUE"
-    log "   - Will skip existing files with valid metadata" "$BLUE"
-    
-    # Extensions
-    log "4. Extensions Installation:" "$GREEN"
-    log "   - ComfyUI-Advanced-ControlNet" "$BLUE"
-    log "   - ComfyUI-InstantID" "$BLUE"
-    log "   - ComfyUI-WanVideoWrapper" "$BLUE"
-    
-    # Final setup
-    log "5. Final Setup:" "$GREEN"
-    log "   - Create startup script" "$BLUE"
-    log "   - Configure CUDA settings" "$BLUE"
-    log "   - Set up auto-start" "$BLUE"
-    
-    log "=============================================" "$BLUE"
-    log "           PLAN COMPLETE                     " "$BLUE"
-    log "=============================================" "$BLUE"
-    
-    # Log that we're proceeding with installation
-    log "Proceeding with automatic installation..." "$GREEN"
+    if ! manage_installation_plan; then
+        log "Failed to manage installation plan" "$RED" "ERROR"
+        return 1
+    fi
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Proceeding with automatic installation..."
 }
 
 # Function to display installation summary
@@ -1112,8 +1188,12 @@ main() {
     # Display installation plan
     display_plan
     
+    # Update status for system preparation
+    update_installation_status "1. System Preparation" "in_progress"
+    
     # Prepare system
     prepare_system || error_exit "System preparation failed"
+    update_installation_status "1. System Preparation" "completed"
     
     # Initialize metadata system first
     log "Initializing metadata system..." "$GREEN"
@@ -1124,6 +1204,9 @@ main() {
     
     # Check CUDA compatibility and store in metadata (non-blocking)
     check_cuda_compatibility || log "CUDA check failed, continuing in CPU mode..." "$YELLOW" "WARNING"
+    
+    # Update status for ComfyUI installation
+    update_installation_status "2. ComfyUI Installation" "in_progress"
     
     # Check if ComfyUI is already installed
     local comfyui_status=$(check_comfyui_installed)
@@ -1154,6 +1237,7 @@ main() {
                 error_exit "ComfyUI dependencies installation failed"
             ;;
     esac
+    update_installation_status "2. ComfyUI Installation" "completed"
     
     # Make all scripts executable
     log "Making scripts executable..." "$GREEN"
