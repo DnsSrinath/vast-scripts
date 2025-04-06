@@ -677,6 +677,60 @@ EOF
     chmod +x "$COMFYUI_DIR/start_with_cuda.sh"
 }
 
+# Function to display installation plan
+display_plan() {
+    log "=============================================" "$BLUE"
+    log "           INSTALLATION PLAN                  " "$BLUE"
+    log "=============================================" "$BLUE"
+    
+    # System preparation
+    log "1. System Preparation:" "$GREEN"
+    log "   - Check Python version (>= 3.8.0)" "$BLUE"
+    log "   - Check CUDA availability" "$BLUE"
+    log "   - Install required packages" "$BLUE"
+    log "   - Set up virtual environment" "$BLUE"
+    
+    # ComfyUI installation
+    log "2. ComfyUI Installation:" "$GREEN"
+    log "   - Clone ComfyUI repository" "$BLUE"
+    log "   - Install ComfyUI dependencies" "$BLUE"
+    log "   - Create model directories" "$BLUE"
+    
+    # Model downloads
+    log "3. Model Downloads:" "$GREEN"
+    log "   - WAN 2.1 Models:" "$BLUE"
+    log "     * CLIP Vision (clip_vision_h.safetensors)" "$BLUE"
+    log "     * Text Encoder (umt5_xxl_fp8_e4m3fn_scaled.safetensors)" "$BLUE"
+    log "     * Diffusion Model (wan2.1_i2v_480p_14B_fp8_scaled.safetensors)" "$BLUE"
+    log "     * VAE (wan_2.1_vae.safetensors)" "$BLUE"
+    log "   - Total size: ~22 GB" "$BLUE"
+    log "   - Will skip existing files with valid metadata" "$BLUE"
+    
+    # Extensions
+    log "4. Extensions Installation:" "$GREEN"
+    log "   - ComfyUI-Advanced-ControlNet" "$BLUE"
+    log "   - ComfyUI-InstantID" "$BLUE"
+    log "   - ComfyUI-WanVideoWrapper" "$BLUE"
+    
+    # Final setup
+    log "5. Final Setup:" "$GREEN"
+    log "   - Create startup script" "$BLUE"
+    log "   - Configure CUDA settings" "$BLUE"
+    log "   - Set up auto-start" "$BLUE"
+    
+    log "=============================================" "$BLUE"
+    log "           PLAN COMPLETE                     " "$BLUE"
+    log "=============================================" "$BLUE"
+    
+    # Ask for confirmation
+    log "Do you want to proceed with the installation? (y/n)" "$YELLOW"
+    read -r response
+    if [[ "$response" != "y" && "$response" != "Y" ]]; then
+        log "Installation cancelled by user" "$RED" "ERROR"
+        exit 1
+    fi
+}
+
 # Function to display installation summary
 display_summary() {
     log "=============================================" "$BLUE"
@@ -699,12 +753,13 @@ display_summary() {
         log "  - Status: ❌ Failed" "$RED" "ERROR"
     fi
     
-    # Model downloads with enhanced status
+    # Model downloads with enhanced status using metadata
     log "Model Downloads:" "$GREEN"
     local total_size=0
     local missing_models=()
     local skipped_models=()
     local downloaded_models=()
+    local metadata_dir="$COMFYUI_DIR/models/.metadata"
     
     # Define expected models
     declare -A expected_models=(
@@ -717,18 +772,28 @@ display_summary() {
     # Check each model
     for model_path in "${!expected_models[@]}"; do
         local target_path="$COMFYUI_DIR/models/$model_path"
+        local metadata_path="$metadata_dir/$(basename "$model_path").meta"
         local model_name="${expected_models[$model_path]}"
         
         if [ -f "$target_path" ]; then
             local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
             if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
                 local formatted_size=$(format_size $size)
-                if [ -f "$target_path.downloaded" ]; then
-                    log "  - $model_name: ✅ Downloaded ($formatted_size)" "$GREEN"
-                    downloaded_models+=("$model_name")
+                if [ -f "$metadata_path" ]; then
+                    local stored_size=$(cat "$metadata_path" | grep "^size=" | cut -d'=' -f2)
+                    local timestamp=$(cat "$metadata_path" | grep "^timestamp=" | cut -d'=' -f2)
+                    local date_str=$(date -d "@$timestamp" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "Unknown")
+                    
+                    if [ "$stored_size" = "$size" ]; then
+                        log "  - $model_name: ✅ Verified ($formatted_size, verified on $date_str)" "$GREEN"
+                        skipped_models+=("$model_name")
+                    else
+                        log "  - $model_name: ⚠️ Size mismatch ($formatted_size vs $(format_size $stored_size))" "$YELLOW" "WARNING"
+                        downloaded_models+=("$model_name")
+                    fi
                 else
-                    log "  - $model_name: ⏭️ Skipped (already exists, $formatted_size)" "$BLUE"
-                    skipped_models+=("$model_name")
+                    log "  - $model_name: ⚠️ Missing metadata ($formatted_size)" "$YELLOW" "WARNING"
+                    downloaded_models+=("$model_name")
                 fi
                 total_size=$((total_size + size))
             else
@@ -804,6 +869,9 @@ display_summary() {
 # Main setup function
 main() {
     log "Starting ComfyUI setup..." "$GREEN"
+    
+    # Display installation plan
+    display_plan
     
     # Prepare system
     prepare_system || error_exit "System preparation failed"
@@ -967,6 +1035,10 @@ main() {
         mkdir -p "$COMFYUI_DIR/models/diffusion_models"
         mkdir -p "$COMFYUI_DIR/models/vae"
         
+        # Create metadata directory if it doesn't exist
+        local metadata_dir="$COMFYUI_DIR/models/.metadata"
+        mkdir -p "$metadata_dir"
+        
         # Define models with their paths and URLs
         declare -A models=(
             ["clip_vision/clip_vision_h.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
@@ -977,13 +1049,14 @@ main() {
         
         log "Total files to check: ${#models[@]}" "$BLUE"
         
-        # Check and download each model
+        # First, check all files and determine which ones need to be downloaded
+        local files_to_download=()
+        local files_to_skip=()
         local count=1
-        local download_success=false
         
         for model_path in "${!models[@]}"; do
             local target_path="$COMFYUI_DIR/models/$model_path"
-            local marker_path="$target_path.downloaded"
+            local metadata_path="$metadata_dir/$(basename "$model_path").meta"
             local url="${models[$model_path]}"
             
             log "[$count/${#models[@]}] Checking $model_path..." "$BLUE"
@@ -992,27 +1065,60 @@ main() {
             if [ -f "$target_path" ]; then
                 local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
                 if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
-                    if [ -f "$marker_path" ]; then
-                        log "✅ $model_path already exists and was downloaded in this session ($(format_size $size))" "$GREEN"
+                    # Check if metadata exists and matches
+                    if [ -f "$metadata_path" ]; then
+                        local stored_size=$(cat "$metadata_path" | grep "^size=" | cut -d'=' -f2)
+                        if [ "$stored_size" = "$size" ]; then
+                            log "✅ $model_path already exists with valid size ($(format_size $size))" "$GREEN"
+                            files_to_skip+=("$model_path")
+                        else
+                            log "⚠️ $model_path exists but metadata size mismatch ($(format_size $size) vs $(format_size $stored_size))" "$YELLOW" "WARNING"
+                            files_to_download+=("$model_path")
+                        fi
                     else
-                        log "⏭️ $model_path already exists from a previous session ($(format_size $size))" "$BLUE"
-                        # Create marker file to indicate this file was "downloaded" in this session
-                        touch "$marker_path"
+                        log "✅ $model_path already exists with valid size ($(format_size $size))" "$GREEN"
+                        # Create metadata file
+                        echo "size=$size" > "$metadata_path"
+                        echo "timestamp=$(date +%s)" >> "$metadata_path"
+                        files_to_skip+=("$model_path")
                     fi
-                    count=$((count + 1))
-                    continue
                 else
                     log "⚠️ $model_path exists but may be incomplete ($(format_size $size))" "$YELLOW" "WARNING"
                     rm -f "$target_path"  # Remove incomplete file
-                    rm -f "$marker_path"  # Remove marker file if it exists
+                    rm -f "$metadata_path"  # Remove metadata file if it exists
+                    files_to_download+=("$model_path")
                 fi
+            else
+                log "❌ $model_path missing, will download" "$YELLOW" "WARNING"
+                rm -f "$metadata_path"  # Remove metadata file if it exists
+                files_to_download+=("$model_path")
             fi
             
-            # Download if file doesn't exist or was incomplete
+            count=$((count + 1))
+        done
+        
+        # Display summary of files to skip and download
+        log "Files to skip: ${#files_to_skip[@]}" "$BLUE"
+        log "Files to download: ${#files_to_download[@]}" "$BLUE"
+        
+        # If all files exist and are valid, we're done
+        if [ ${#files_to_download[@]} -eq 0 ]; then
+            log "All files already exist and are valid. No downloads needed." "$GREEN"
+            return 0
+        fi
+        
+        # Download only the files that don't exist or are incomplete
+        local download_success=true
+        
+        for model_path in "${files_to_download[@]}"; do
+            local target_path="$COMFYUI_DIR/models/$model_path"
+            local metadata_path="$metadata_dir/$(basename "$model_path").meta"
+            local url="${models[$model_path]}"
+            
             log "Downloading $model_path..." "$BLUE"
             local retry_count=0
             local max_retries=3
-            download_success=false
+            local download_ok=false
             
             while [ $retry_count -lt $max_retries ]; do
                 # Use wget with progress bar and file size information
@@ -1030,14 +1136,15 @@ main() {
                     local downloaded_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
                     if [ "$downloaded_size" -gt 1048576 ]; then  # 1MB in bytes
                         log "✅ Successfully downloaded $model_path ($(format_size $downloaded_size))" "$GREEN"
-                        # Create marker file to indicate this file was downloaded in this session
-                        touch "$marker_path"
-                        download_success=true
+                        # Create metadata file
+                        echo "size=$downloaded_size" > "$metadata_path"
+                        echo "timestamp=$(date +%s)" >> "$metadata_path"
+                        download_ok=true
                         break
                     else
                         log "⚠️ Downloaded file is too small ($(format_size $downloaded_size))" "$YELLOW" "WARNING"
                         rm -f "$target_path"  # Remove incomplete file
-                        rm -f "$marker_path"  # Remove marker file if it exists
+                        rm -f "$metadata_path"  # Remove metadata file if it exists
                     fi
                 fi
                 
@@ -1050,12 +1157,9 @@ main() {
                 fi
             done
             
-            if [ "$download_success" = false ]; then
-                log "❌ Failed to download $model_path" "$RED" "ERROR"
-                return 1
+            if [ "$download_ok" = false ]; then
+                download_success=false
             fi
-            
-            count=$((count + 1))
         done
         
         # Verify all downloads
@@ -1064,15 +1168,18 @@ main() {
         
         for model_path in "${!models[@]}"; do
             local target_path="$COMFYUI_DIR/models/$model_path"
-            local marker_path="$target_path.downloaded"
+            local metadata_path="$metadata_dir/$(basename "$model_path").meta"
             
             if [ -f "$target_path" ]; then
                 local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
                 if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
-                    if [ -f "$marker_path" ]; then
-                        log "✅ $model_path verified (downloaded in this session, $(format_size $size))" "$GREEN"
+                    if [ -f "$metadata_path" ]; then
+                        log "✅ $model_path verified with metadata ($(format_size $size))" "$GREEN"
                     else
-                        log "✅ $model_path verified (from previous session, $(format_size $size))" "$BLUE"
+                        log "✅ $model_path verified but missing metadata ($(format_size $size))" "$BLUE"
+                        # Create metadata file
+                        echo "size=$size" > "$metadata_path"
+                        echo "timestamp=$(date +%s)" >> "$metadata_path"
                     fi
                 else
                     log "❌ $model_path is too small ($(format_size $size))" "$RED" "ERROR"
