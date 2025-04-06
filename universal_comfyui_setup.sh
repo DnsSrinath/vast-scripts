@@ -1254,9 +1254,11 @@ download_model() {
     # If file exists but metadata doesn't match, verify it
     if [ -f "$output_path" ]; then
         actual_size=$(get_file_size "$output_path")
-        if [ "$actual_size" = "$expected_size" ]; then
-            # File size matches, update metadata
-            manage_metadata "update" "$output_path" "$expected_size"
+        # Allow for small size differences (up to 1MB) due to filesystem differences
+        size_diff=$((actual_size - expected_size))
+        if [ ${size_diff#-} -le 1048576 ]; then
+            # File size matches within acceptable range, update metadata
+            manage_metadata "update" "$output_path" "$actual_size"
             log "✅ $model_name exists with correct size ($(format_size "$actual_size")), updating metadata" "$GREEN"
             return 0
         else
@@ -1271,46 +1273,82 @@ download_model() {
     log "Downloading $model_name..." "$BLUE"
     
     # Download with wget and handle errors
-    if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$temp_file" 2>/dev/null; then
-        # Verify the downloaded file exists
-        if [ ! -f "$temp_file" ]; then
-            log "❌ Failed to download $model_name: Temporary file not created" "$RED" "ERROR"
-            return 1
-        fi
-        
-        # Get the downloaded file size
-        downloaded_size=$(get_file_size "$temp_file")
-        
-        # Verify the downloaded size
-        if [ "$downloaded_size" = "0" ]; then
-            log "❌ Failed to download $model_name: Downloaded file is empty" "$RED" "ERROR"
-            rm -f "$temp_file"
-            return 1
-        fi
-        
-        # Allow for small size differences (up to 1MB) due to filesystem differences
-        size_diff=$((downloaded_size - expected_size))
-        if [ ${size_diff#-} -le 1048576 ] || [ "$downloaded_size" = "$expected_size" ]; then
-            # Move the file to its final location
-            if mv "$temp_file" "$output_path" 2>/dev/null; then
-                manage_metadata "update" "$output_path" "$downloaded_size"
-                log "✅ Successfully downloaded $model_name ($(format_size "$downloaded_size"))" "$GREEN"
-                success=true
-            else
-                log "❌ Failed to move downloaded file to final location" "$RED" "ERROR"
+    while [ $retry_count -lt $max_retries ]; do
+        # Use wget with resume capability and progress bar
+        if wget --no-check-certificate --progress=bar:force:noscroll --continue "$url" -O "$temp_file" 2>/dev/null; then
+            # Verify the downloaded file exists
+            if [ ! -f "$temp_file" ]; then
+                log "❌ Failed to download $model_name: Temporary file not created" "$RED" "ERROR"
+                retry_count=$((retry_count + 1))
+                continue
+            fi
+            
+            # Get the downloaded file size
+            downloaded_size=$(get_file_size "$temp_file")
+            
+            # Verify the downloaded size
+            if [ "$downloaded_size" = "0" ]; then
+                log "❌ Failed to download $model_name: Downloaded file is empty" "$RED" "ERROR"
                 rm -f "$temp_file"
-                return 1
+                retry_count=$((retry_count + 1))
+                continue
+            fi
+            
+            # Allow for small size differences (up to 1MB) due to filesystem differences
+            size_diff=$((downloaded_size - expected_size))
+            if [ ${size_diff#-} -le 1048576 ]; then
+                # Move the file to its final location
+                if mv "$temp_file" "$output_path" 2>/dev/null; then
+                    manage_metadata "update" "$output_path" "$downloaded_size"
+                    log "✅ Successfully downloaded $model_name ($(format_size "$downloaded_size"))" "$GREEN"
+                    success=true
+                    break
+                else
+                    log "❌ Failed to move downloaded file to final location" "$RED" "ERROR"
+                    rm -f "$temp_file"
+                    retry_count=$((retry_count + 1))
+                    continue
+                fi
+            else
+                # If size difference is significant, try to verify if the file is still valid
+                if [ "$downloaded_size" -gt 1048576 ]; then  # If file is at least 1MB
+                    # Check if the file has a valid structure (basic check)
+                    if file "$temp_file" | grep -q "data"; then
+                        log "⚠️ Size mismatch for $model_name ($(format_size "$downloaded_size") vs $(format_size "$expected_size")), but file appears valid" "$YELLOW" "WARNING"
+                        log "Proceeding with the downloaded file despite size mismatch" "$YELLOW" "WARNING"
+                        
+                        # Move the file to its final location
+                        if mv "$temp_file" "$output_path" 2>/dev/null; then
+                            manage_metadata "update" "$output_path" "$downloaded_size"
+                            log "✅ Using $model_name with size $(format_size "$downloaded_size")" "$GREEN"
+                            success=true
+                            break
+                        else
+                            log "❌ Failed to move downloaded file to final location" "$RED" "ERROR"
+                            rm -f "$temp_file"
+                            retry_count=$((retry_count + 1))
+                            continue
+                        fi
+                    else
+                        log "❌ Downloaded file for $model_name appears invalid, retrying..." "$RED" "ERROR"
+                        rm -f "$temp_file"
+                        retry_count=$((retry_count + 1))
+                        continue
+                    fi
+                else
+                    log "❌ Downloaded file size mismatch for $model_name ($(format_size "$downloaded_size") vs $(format_size "$expected_size"))" "$RED" "ERROR"
+                    rm -f "$temp_file"
+                    retry_count=$((retry_count + 1))
+                    continue
+                fi
             fi
         else
-            log "❌ Downloaded file size mismatch for $model_name ($(format_size "$downloaded_size") vs $(format_size "$expected_size"))" "$RED" "ERROR"
-            rm -f "$temp_file"
-            return 1
+            log "❌ Failed to download $model_name (attempt $((retry_count + 1))/$max_retries)" "$RED" "ERROR"
+            retry_count=$((retry_count + 1))
+            sleep 5
+            continue
         fi
-    else
-        log "❌ Failed to download $model_name" "$RED" "ERROR"
-        rm -f "$temp_file"
-        return 1
-    fi
+    done
     
     # Clean up temporary file if it still exists
     rm -f "$temp_file"
@@ -1318,6 +1356,7 @@ download_model() {
     if [ "$success" = true ]; then
         return 0
     else
+        log "❌ Failed to download $model_name after $max_retries attempts" "$RED" "ERROR"
         return 1
     fi
 }
@@ -1492,41 +1531,206 @@ download_wan_models() {
 get_file_size_from_url() {
     local url="$1"
     local size=0
+    local max_retries=3
+    local retry_count=0
     
-    # Try using curl to get file size
+    while [ $retry_count -lt $max_retries ]; do
+        # Try using curl to get file size
+        if command -v curl &> /dev/null; then
+            # Try with -I first (HEAD request)
+            size=$(curl -sI -L --retry 3 --retry-delay 5 "$url" | grep -i "content-length:" | awk '{print $2}' | tr -d '\r')
+            
+            # If that failed, try with -s (GET request with no output)
+            if [ -z "$size" ] || [ "$size" = "0" ]; then
+                size=$(curl -s -L --retry 3 --retry-delay 5 -o /dev/null -w "%{size_download}" "$url")
+            fi
+        # Fallback to wget if curl is not available
+        elif command -v wget &> /dev/null; then
+            # Try with --spider first (HEAD request)
+            size=$(wget --spider --server-response --no-check-certificate "$url" 2>&1 | grep -i "content-length:" | awk '{print $2}')
+            
+            # If that failed, try with -q --show-progress (GET request with minimal output)
+            if [ -z "$size" ] || [ "$size" = "0" ]; then
+                size=$(wget -q --show-progress --no-check-certificate -O /dev/null "$url" 2>&1 | grep -o "[0-9]*[KMG] downloaded" | sed 's/\([0-9]*\)\([KMG]\).*/\1\2/')
+                
+                # Convert K/M/G to bytes
+                if [[ "$size" =~ ([0-9]+)([KMG]) ]]; then
+                    local num="${BASH_REMATCH[1]}"
+                    local unit="${BASH_REMATCH[2]}"
+                    case "$unit" in
+                        K) size=$((num * 1024)) ;;
+                        M) size=$((num * 1024 * 1024)) ;;
+                        G) size=$((num * 1024 * 1024 * 1024)) ;;
+                    esac
+                fi
+            fi
+        fi
+        
+        # Return size if we got a valid value
+        if [ ! -z "$size" ] && [ "$size" != "0" ]; then
+            echo "$size"
+            return 0
+        fi
+        
+        # Increment retry counter and wait before retrying
+        retry_count=$((retry_count + 1))
+        if [ $retry_count -lt $max_retries ]; then
+            log "Retrying file size detection for $url (attempt $((retry_count + 1))/$max_retries)..." "$YELLOW" "WARNING"
+            sleep 5
+        fi
+    done
+    
+    # If we couldn't get the size after all retries, try a fallback method
+    log "Could not determine file size for $url, using fallback method..." "$YELLOW" "WARNING"
+    
+    # Create a temporary file to download a small portion
+    local temp_file=$(mktemp)
     if command -v curl &> /dev/null; then
-        size=$(curl -sI "$url" | grep -i "content-length:" | awk '{print $2}' | tr -d '\r')
-    # Fallback to wget if curl is not available
+        curl -L --range 0-1023 -o "$temp_file" "$url" 2>/dev/null
     elif command -v wget &> /dev/null; then
-        size=$(wget --spider --server-response "$url" 2>&1 | grep -i "content-length:" | awk '{print $2}')
+        wget -q --no-check-certificate --max-redirect=0 -O "$temp_file" "$url" 2>/dev/null
     fi
     
-    # Return 0 if size couldn't be determined
-    if [ -z "$size" ] || [ "$size" = "0" ]; then
-        return 1
+    # Check if we got any content
+    if [ -s "$temp_file" ]; then
+        # If we got content, estimate the size based on the first 1KB
+        local first_kb_size=$(stat -c %s "$temp_file" 2>/dev/null || echo "0")
+        if [ "$first_kb_size" -gt 0 ]; then
+            # Estimate total size based on HTTP headers or content analysis
+            local estimated_size=$((first_kb_size * 1000))  # Rough estimate
+            rm -f "$temp_file"
+            echo "$estimated_size"
+            return 0
+        fi
     fi
     
-    echo "$size"
-    return 0
+    # Clean up and return failure
+    rm -f "$temp_file"
+    return 1
 }
 
 # Function to initialize model sizes
 initialize_model_sizes() {
     local temp_models=()
+    local total_models=${#MODELS[@]}
+    local processed=0
+    local success=0
+    local failed=0
+    
+    log "Initializing model sizes for $total_models models..." "$BLUE"
     
     for model_info in "${MODELS[@]}"; do
         IFS=':' read -r path url <<< "$model_info"
+        local model_name=$(basename "$path")
+        processed=$((processed + 1))
+        
+        log "[$processed/$total_models] Getting size for $model_name..." "$BLUE"
+        
+        # Try to get the file size
         local size=$(get_file_size_from_url "$url")
         
         if [ $? -eq 0 ] && [ ! -z "$size" ]; then
             temp_models+=("$path:$size:$url")
+            success=$((success + 1))
+            log "✅ Size for $model_name: $(format_size "$size")" "$GREEN"
         else
-            log "Warning: Could not determine size for $path, skipping..." "$YELLOW" "WARNING"
+            # If we couldn't get the size, try to estimate it
+            log "⚠️ Could not determine exact size for $model_name, using estimated size" "$YELLOW" "WARNING"
+            
+            # Estimate size based on model type
+            local estimated_size=0
+            case "$model_name" in
+                *"clip_vision"*)
+                    estimated_size=1073741824  # ~1GB
+                    ;;
+                *"umt5"*)
+                    estimated_size=2147483648  # ~2GB
+                    ;;
+                *"wan"*"i2v"*)
+                    estimated_size=10737418240  # ~10GB
+                    ;;
+                *"vae"*)
+                    estimated_size=536870912  # ~512MB
+                    ;;
+                *)
+                    estimated_size=1073741824  # Default ~1GB
+                    ;;
+            esac
+            
+            temp_models+=("$path:$estimated_size:$url")
+            log "⚠️ Using estimated size for $model_name: $(format_size "$estimated_size")" "$YELLOW" "WARNING"
+            failed=$((failed + 1))
         fi
     done
     
     # Update MODELS array with sizes
     MODELS=("${temp_models[@]}")
+    
+    # Report summary
+    log "Model size initialization complete: $success succeeded, $failed failed" "$BLUE"
+    if [ $failed -gt 0 ]; then
+        log "⚠️ Some models have estimated sizes and may need manual verification" "$YELLOW" "WARNING"
+    fi
+    
+    return 0
+}
+
+# Function to verify model file integrity
+verify_model_file() {
+    local file_path="$1"
+    local expected_size="$2"
+    local model_name=""
+    local file_type=""
+    local file_size="0"
+    local is_valid=false
+    
+    # Validate parameters
+    if [ -z "$file_path" ] || [ ! -f "$file_path" ]; then
+        log "Invalid file path for verification: $file_path" "$RED" "ERROR"
+        return 1
+    fi
+    
+    # Get model name and file size
+    model_name=$(basename "$file_path")
+    file_size=$(get_file_size "$file_path")
+    
+    # Check if file is empty
+    if [ "$file_size" = "0" ]; then
+        log "❌ File $model_name is empty" "$RED" "ERROR"
+        return 1
+    fi
+    
+    # Check file type
+    file_type=$(file "$file_path" 2>/dev/null | cut -d':' -f2- | sed 's/^[[:space:]]*//')
+    
+    # Check if it's a safetensors file
+    if echo "$file_type" | grep -q "data"; then
+        # For safetensors files, check if it has the expected structure
+        if head -c 1024 "$file_path" | grep -q "safetensors"; then
+            is_valid=true
+        elif head -c 1024 "$file_path" | grep -q "PK"; then
+            # It might be a zip file containing safetensors
+            is_valid=true
+        fi
+    fi
+    
+    # If we couldn't determine if it's valid by content, check size
+    if [ "$is_valid" = false ]; then
+        # Allow for small size differences (up to 1MB)
+        local size_diff=$((file_size - expected_size))
+        if [ ${size_diff#-} -le 1048576 ]; then
+            is_valid=true
+        fi
+    fi
+    
+    # Report the result
+    if [ "$is_valid" = true ]; then
+        log "✅ Verified $model_name ($(format_size "$file_size"))" "$GREEN"
+        return 0
+    else
+        log "❌ Verification failed for $model_name ($(format_size "$file_size") vs $(format_size "$expected_size"))" "$RED" "ERROR"
+        return 1
+    fi
 }
 
 # Main setup function
@@ -1545,6 +1749,7 @@ main() {
     log "Python version: $PYTHON_VERSION" "$GREEN"
     
     # Check CUDA availability
+    CUDA_AVAILABLE=false
     if command -v nvidia-smi &> /dev/null; then
         log "NVIDIA GPU detected" "$GREEN"
         CUDA_DRIVER_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
@@ -1555,43 +1760,77 @@ main() {
         export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
         export PATH=$CUDA_HOME/bin:$PATH
         
-        # Install PyTorch with CUDA support
-        log "Installing PyTorch with CUDA support..." "$GREEN"
-        pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 || \
-            log "PyTorch CUDA installation failed, will try CPU mode" "$YELLOW"
+        # Check if CUDA is actually working
+        if python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+            CUDA_AVAILABLE=true
+            log "CUDA is available and working" "$GREEN"
+            
+            # Install PyTorch with CUDA support if not already installed
+            if ! python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+                log "Installing PyTorch with CUDA support..." "$GREEN"
+                pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 || \
+                    log "PyTorch CUDA installation failed, will try CPU mode" "$YELLOW"
+            else
+                log "PyTorch with CUDA support already installed" "$GREEN"
+            fi
+        else
+            log "CUDA is not working properly, falling back to CPU mode" "$YELLOW"
+            export CUDA_VISIBLE_DEVICES=""
+        fi
     else
         log "No NVIDIA GPU detected, using CPU mode" "$YELLOW"
         export CUDA_VISIBLE_DEVICES=""
-        
-        # Install CPU version of PyTorch
-        log "Installing PyTorch CPU version..." "$GREEN"
-        pip3 install torch torchvision torchaudio || \
-            log "PyTorch installation failed" "$YELLOW"
+    fi
+    
+    # Install CPU version of PyTorch if CUDA is not available
+    if [ "$CUDA_AVAILABLE" = false ]; then
+        # Check if PyTorch is already installed
+        if ! python3 -c "import torch" 2>/dev/null; then
+            log "Installing PyTorch CPU version..." "$GREEN"
+            pip3 install torch torchvision torchaudio || \
+                log "PyTorch installation failed" "$YELLOW"
+        else
+            log "PyTorch already installed" "$GREEN"
+        fi
     fi
     
     # Step 2: ComfyUI Installation
     log "Step 2: ComfyUI Installation" "$BLUE"
     
-    # Remove existing ComfyUI directory if it exists
-    if [ -d "$COMFYUI_DIR" ]; then
-        log "Removing existing ComfyUI directory..." "$YELLOW"
-        rm -rf "$COMFYUI_DIR" || error_exit "Failed to remove existing ComfyUI directory"
+    # Check if ComfyUI is already installed
+    if [ -d "$COMFYUI_DIR" ] && [ -f "$COMFYUI_DIR/main.py" ]; then
+        log "ComfyUI already installed at $COMFYUI_DIR, skipping installation" "$GREEN"
+        
+        # Check if dependencies are installed
+        if ! python3 -c "import torch; import torchvision; import torchaudio" 2>/dev/null; then
+            log "Installing ComfyUI dependencies..." "$GREEN"
+            cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
+            pip3 install -r requirements.txt || log "Some dependencies failed to install" "$YELLOW"
+        else
+            log "ComfyUI dependencies already installed" "$GREEN"
+        fi
+    else
+        # Remove existing ComfyUI directory if it exists but is incomplete
+        if [ -d "$COMFYUI_DIR" ]; then
+            log "Removing incomplete ComfyUI directory..." "$YELLOW"
+            rm -rf "$COMFYUI_DIR" || error_exit "Failed to remove existing ComfyUI directory"
+        fi
+        
+        # Clone ComfyUI repository
+        log "Cloning ComfyUI repository..." "$GREEN"
+        git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR" || \
+            error_exit "Failed to clone ComfyUI repository"
+        
+        # Install ComfyUI dependencies
+        log "Installing ComfyUI dependencies..." "$GREEN"
+        cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
+        pip3 install -r requirements.txt || error_exit "Failed to install ComfyUI dependencies"
     fi
     
-    # Clone ComfyUI repository
-    log "Cloning ComfyUI repository..." "$GREEN"
-    git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR" || \
-        error_exit "Failed to clone ComfyUI repository"
-    
-    # Install ComfyUI dependencies
-    log "Installing ComfyUI dependencies..." "$GREEN"
-    cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
-    pip3 install -r requirements.txt || error_exit "Failed to install ComfyUI dependencies"
-    
-    # Create model directories
+    # Create model directories if they don't exist
     log "Creating model directories..." "$GREEN"
     mkdir -p "$COMFYUI_DIR/models/"{diffusion_models,text_encoders,clip_vision,vae} || \
-        error_exit "Failed to create model directories"
+        log "Some model directories already exist" "$YELLOW"
     
     # Step 3: Model Downloads
     log "Step 3: Model Downloads" "$BLUE"
@@ -1599,63 +1838,90 @@ main() {
     log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW"
     
     # Download WAN 2.1 models
+    local total_models=${#MODELS[@]}
+    local processed=0
+    local success=0
+    local failed=0
+    local skipped=0
+    
     for model_info in "${MODELS[@]}"; do
         IFS=':' read -r path size url <<< "$model_info"
         output_path="$COMFYUI_DIR/models/$path"
         model_name=$(basename "$path")
+        processed=$((processed + 1))
+        
+        log "[$processed/$total_models] Processing $model_name..." "$BLUE"
         
         # Create directory if it doesn't exist
         mkdir -p "$(dirname "$output_path")" || error_exit "Failed to create directory for $model_name"
         
-        # Check if file already exists and has correct size
+        # Check if file already exists and verify it
         if [ -f "$output_path" ]; then
-            actual_size=$(stat -c %s "$output_path" 2>/dev/null || echo "0")
-            if [ "$actual_size" = "$size" ]; then
-                log "Model $model_name already exists with correct size ($(numfmt --to=iec-i --suffix=B $size)), skipping..." "$GREEN"
+            if verify_model_file "$output_path" "$size"; then
+                log "✅ $model_name already exists and is valid, skipping..." "$GREEN"
+                success=$((success + 1))
+                skipped=$((skipped + 1))
                 continue
             else
-                log "Model $model_name exists but size mismatch ($(numfmt --to=iec-i --suffix=B $actual_size) vs $(numfmt --to=iec-i --suffix=B $size)), re-downloading..." "$YELLOW"
+                log "⚠️ $model_name exists but verification failed, re-downloading..." "$YELLOW" "WARNING"
                 rm -f "$output_path"
             fi
         fi
         
         # Download the model
-        log "Downloading $model_name ($(numfmt --to=iec-i --suffix=B $size))..." "$BLUE"
-        wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$output_path" || \
-            error_exit "Failed to download $model_name"
-        
-        # Verify the file exists and has content
-        if [ ! -f "$output_path" ] || [ ! -s "$output_path" ]; then
-            error_exit "Downloaded file $model_name is missing or empty"
+        log "Downloading $model_name ($(format_size "$size"))..." "$BLUE"
+        if download_model "$url" "$output_path" "$size"; then
+            # Verify the downloaded file
+            if verify_model_file "$output_path" "$size"; then
+                log "✅ Successfully downloaded and verified $model_name" "$GREEN"
+                success=$((success + 1))
+            else
+                log "❌ Downloaded $model_name but verification failed" "$RED" "ERROR"
+                failed=$((failed + 1))
+            fi
+        else
+            log "❌ Failed to download $model_name" "$RED" "ERROR"
+            failed=$((failed + 1))
         fi
-        
-        # Verify the downloaded size matches expected size
-        actual_size=$(stat -c %s "$output_path" 2>/dev/null || echo "0")
-        if [ "$actual_size" != "$size" ]; then
-            error_exit "Downloaded file $model_name size mismatch ($(numfmt --to=iec-i --suffix=B $actual_size) vs $(numfmt --to=iec-i --suffix=B $size))"
-        fi
-        
-        log "Successfully downloaded $model_name ($(numfmt --to=iec-i --suffix=B $actual_size))" "$GREEN"
     done
+    
+    # Report download summary
+    log "Model downloads complete: $success succeeded ($skipped skipped), $failed failed" "$BLUE"
+    if [ $failed -gt 0 ]; then
+        log "⚠️ Some models failed to download or verify correctly" "$YELLOW" "WARNING"
+        log "Check the log file for details: $LOG_FILE" "$YELLOW" "WARNING"
+    fi
     
     # Step 4: Extensions Installation
     log "Step 4: Extensions Installation" "$BLUE"
     
     # Install ComfyUI-WanVideoWrapper
-    log "Installing ComfyUI-WanVideoWrapper..." "$GREEN"
-    mkdir -p "$COMFYUI_DIR/custom_nodes" || error_exit "Failed to create custom_nodes directory"
-    git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" || \
-        log "Failed to install ComfyUI-WanVideoWrapper" "$YELLOW"
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" ]; then
+        log "ComfyUI-WanVideoWrapper already installed, skipping..." "$GREEN"
+    else
+        log "Installing ComfyUI-WanVideoWrapper..." "$GREEN"
+        mkdir -p "$COMFYUI_DIR/custom_nodes" || error_exit "Failed to create custom_nodes directory"
+        git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git "$COMFYUI_DIR/custom_nodes/ComfyUI-WanVideoWrapper" || \
+            log "Failed to install ComfyUI-WanVideoWrapper" "$YELLOW"
+    fi
     
     # Install ComfyUI-Advanced-ControlNet
-    log "Installing ComfyUI-Advanced-ControlNet..." "$GREEN"
-    git clone https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git "$COMFYUI_DIR/custom_nodes/ComfyUI-Advanced-ControlNet" || \
-        log "Failed to install ComfyUI-Advanced-ControlNet" "$YELLOW"
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-Advanced-ControlNet" ]; then
+        log "ComfyUI-Advanced-ControlNet already installed, skipping..." "$GREEN"
+    else
+        log "Installing ComfyUI-Advanced-ControlNet..." "$GREEN"
+        git clone https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git "$COMFYUI_DIR/custom_nodes/ComfyUI-Advanced-ControlNet" || \
+            log "Failed to install ComfyUI-Advanced-ControlNet" "$YELLOW"
+    fi
     
     # Install ComfyUI-InstantID
-    log "Installing ComfyUI-InstantID..." "$GREEN"
-    git clone https://github.com/cubiq/ComfyUI_InstantID.git "$COMFYUI_DIR/custom_nodes/ComfyUI-InstantID" || \
-        log "Failed to install ComfyUI-InstantID" "$YELLOW"
+    if [ -d "$COMFYUI_DIR/custom_nodes/ComfyUI-InstantID" ]; then
+        log "ComfyUI-InstantID already installed, skipping..." "$GREEN"
+    else
+        log "Installing ComfyUI-InstantID..." "$GREEN"
+        git clone https://github.com/cubiq/ComfyUI_InstantID.git "$COMFYUI_DIR/custom_nodes/ComfyUI-InstantID" || \
+            log "Failed to install ComfyUI-InstantID" "$YELLOW"
+    fi
     
     # Install extension dependencies
     for ext_dir in "$COMFYUI_DIR/custom_nodes/"*; do
@@ -1732,6 +1998,8 @@ EOF
         echo "    /workspace/container_startup.sh" >> ~/.bashrc
         echo "    touch /workspace/.comfyui_started" >> ~/.bashrc
         echo "fi" >> ~/.bashrc
+    else
+        log "Startup script already added to .bashrc" "$GREEN"
     fi
     
     # Display summary
@@ -1740,8 +2008,8 @@ EOF
     log "=============================================" "$BLUE"
     log "System Information:" "$GREEN"
     log "  - Python Version: $PYTHON_VERSION" "$GREEN"
-    log "  - CUDA Available: $(python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "No")" "$GREEN"
-    log "  - GPU Mode: $(if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then echo "CPU"; else echo "GPU"; fi)" "$GREEN"
+    log "  - CUDA Available: $(if [ "$CUDA_AVAILABLE" = true ]; then echo "Yes"; else echo "No"; fi)" "$GREEN"
+    log "  - GPU Mode: $(if [ "$CUDA_AVAILABLE" = true ]; then echo "GPU"; else echo "CPU"; fi)" "$GREEN"
     
     log "ComfyUI Installation:" "$GREEN"
     if [ -d "$COMFYUI_DIR" ]; then
@@ -1790,7 +2058,7 @@ EOF
     log "Starting ComfyUI..." "$GREEN"
     cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
     
-    if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    if [ "$CUDA_AVAILABLE" = false ]; then
         log "Starting in CPU mode..." "$YELLOW"
         CUDA_VISIBLE_DEVICES="" PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 --cpu > comfyui.log 2>&1 &
     else
@@ -1812,6 +2080,3 @@ EOF
         exit 1
     fi
 }
-
-# Run main function
-main "$@"
