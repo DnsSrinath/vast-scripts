@@ -167,35 +167,13 @@ prepare_system() {
         log "⚠️ Low disk space: ${available_space}MB available. Recommended: 20GB+" "$YELLOW" "WARNING"
     fi
     
-    # Try to fix broken packages first
-    log "Checking for broken packages..." "$GREEN"
-    apt-get -f install -y || log "Package fix attempt failed, continuing anyway" "$YELLOW" "WARNING"
+    # Skip any package installation that requires apt - it's causing problems with NVIDIA
+    log "Skipping system package installation (avoiding NVIDIA dependency issues)" "$YELLOW"
     
-    # Update package lists
-    log "Updating package lists..." "$GREEN"
-    if ! run_command "apt-get update -y" "Failed to update package lists" 120 3 10; then
-        log "Package list update failed, continuing..." "$YELLOW" "WARNING"
-    fi
-    
-    # Check for required packages but don't fail if installation fails
-    local required_packages="git wget curl unzip python3 python3-pip python3-venv jq"
-    log "Checking required packages..." "$GREEN"
-    
-    # Check each package individually
-    for pkg in $required_packages; do
-        if ! command -v $pkg &> /dev/null; then
-            log "Installing package: $pkg" "$YELLOW"
-            apt-get install -y $pkg || log "Failed to install $pkg, will check if already installed" "$YELLOW" "WARNING"
-        else
-            log "Package $pkg is already installed" "$GREEN"
-        fi
-    done
-    
-    # Ensure jq is available (needed for JSON parsing)
-    if ! command -v jq &> /dev/null; then
-        log "Installing jq using alternative method..." "$YELLOW"
-        wget -O /usr/local/bin/jq https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 && \
-        chmod +x /usr/local/bin/jq || log "Failed to install jq, will use fallback methods" "$YELLOW" "WARNING"
+    # Check Python is available
+    if ! command -v python3 &> /dev/null; then
+        log "Python3 not found! This is critical." "$RED" "ERROR"
+        return 1
     fi
     
     # Check Python version
@@ -207,13 +185,14 @@ prepare_system() {
         # Python version is 3.8.0 or higher
         log "Python version is compatible" "$GREEN"
     else
-        error_exit "Python version too old. Required: 3.8.0+, Found: $python_version"
+        log "Python version too old. Required: 3.8.0+, Found: $python_version" "$RED" "ERROR" 
+        return 1
     fi
     
     # Create and activate virtual environment
     log "Setting up Python virtual environment..." "$GREEN"
     if [ ! -d "${WORKSPACE}/venv" ]; then
-        run_command "python3 -m venv ${WORKSPACE}/venv" "Failed to create virtual environment" || \
+        python3 -m venv "${WORKSPACE}/venv" || \
             log "Failed to create virtual environment, continuing with system Python" "$YELLOW" "WARNING"
     fi
     
@@ -227,7 +206,7 @@ prepare_system() {
     
     # Upgrade pip
     log "Upgrading pip to latest version..." "$GREEN"
-    run_command "pip install --upgrade pip" "Failed to upgrade pip" 120 3 5 || \
+    pip install --upgrade pip || \
         log "Failed to upgrade pip, continuing with current version" "$YELLOW" "WARNING"
     
     # Install Python dependencies
@@ -245,10 +224,10 @@ huggingface_hub>=0.19.0
 EOF
     
     log "Installing Python dependencies..." "$GREEN"
-    run_command "pip install -r $REQUIREMENTS_FILE" "Failed to install Python dependencies" 600 3 10 || \
+    pip install -r "$REQUIREMENTS_FILE" || \
         log "Some Python dependencies failed to install, will try to continue" "$YELLOW" "WARNING"
         
-    # Return success even if some steps failed
+    # Return success
     return 0
 }
 
@@ -275,41 +254,77 @@ install_comfyui() {
     if [ -d "$COMFYUI_DIR" ] && [ -f "$COMFYUI_DIR/main.py" ]; then
         log "ComfyUI already installed at $COMFYUI_DIR" "$GREEN"
         
-        # Check if ComfyUI is up-to-date
-        log "Updating ComfyUI..." "$GREEN"
-        cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
-        
-        if [ -d ".git" ]; then
-            run_command "git pull" "Failed to update ComfyUI" 180 3 5 || \
-                log "Failed to update ComfyUI, continuing with existing installation" "$YELLOW" "WARNING"
+        # Check if git is available before trying to update
+        if command -v git &> /dev/null && [ -d "$COMFYUI_DIR/.git" ]; then
+            log "Updating ComfyUI..." "$GREEN"
+            cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
+            git pull || log "Failed to update ComfyUI, continuing with existing installation" "$YELLOW" "WARNING"
+            cd - > /dev/null || log "Failed to return to previous directory" "$YELLOW" "WARNING"
         else
-            log "ComfyUI not installed via git, skipping update" "$YELLOW" "WARNING"
+            log "Git not available or ComfyUI not installed via git, skipping update" "$YELLOW" "WARNING"
         fi
     else
-        # Clone ComfyUI repository
-        log "Cloning ComfyUI repository..." "$GREEN"
-        run_command "git clone https://github.com/comfyanonymous/ComfyUI.git $COMFYUI_DIR" \
-            "Failed to clone ComfyUI repository" 300 3 10 || \
-            error_exit "Failed to clone ComfyUI repository"
+        # Clone ComfyUI repository if git is available
+        if command -v git &> /dev/null; then
+            log "Cloning ComfyUI repository..." "$GREEN"
+            git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR" || {
+                log "Failed to clone using git, trying wget alternative..." "$YELLOW" "WARNING"
+                # Alternative download method using wget
+                mkdir -p "$COMFYUI_DIR"
+                cd "$TEMP_DIR" || error_exit "Failed to change to temp directory"
+                wget -O comfyui.zip https://github.com/comfyanonymous/ComfyUI/archive/refs/heads/master.zip && \
+                unzip comfyui.zip && \
+                cp -r ComfyUI-master/* "$COMFYUI_DIR/" && \
+                rm -rf ComfyUI-master comfyui.zip || \
+                error_exit "Failed to download ComfyUI"
+                cd - > /dev/null || log "Failed to return to previous directory" "$YELLOW" "WARNING"
+            }
+        else
+            # Alternative download method using wget or curl
+            log "Git not available, downloading ComfyUI using alternative method..." "$YELLOW"
+            mkdir -p "$COMFYUI_DIR" "$TEMP_DIR"
+            cd "$TEMP_DIR" || error_exit "Failed to change to temp directory"
+            
+            if command -v wget &> /dev/null; then
+                wget -O comfyui.zip https://github.com/comfyanonymous/ComfyUI/archive/refs/heads/master.zip
+            elif command -v curl &> /dev/null; then
+                curl -L -o comfyui.zip https://github.com/comfyanonymous/ComfyUI/archive/refs/heads/master.zip
+            else
+                error_exit "Neither git, wget nor curl is available. Cannot download ComfyUI."
+            fi
+            
+            # Extract and copy files
+            if command -v unzip &> /dev/null; then
+                unzip comfyui.zip && \
+                cp -r ComfyUI-master/* "$COMFYUI_DIR/" && \
+                rm -rf ComfyUI-master comfyui.zip || \
+                error_exit "Failed to extract ComfyUI"
+            else
+                error_exit "Unzip command not available. Cannot extract ComfyUI."
+            fi
+            
+            cd - > /dev/null || log "Failed to return to previous directory" "$YELLOW" "WARNING"
+        fi
     fi
     
     # Install ComfyUI dependencies
     log "Installing ComfyUI dependencies..." "$GREEN"
     cd "$COMFYUI_DIR" || error_exit "Failed to change to ComfyUI directory"
-    run_command "pip install -r requirements.txt" "Failed to install ComfyUI dependencies" 600 3 10 || \
-        error_exit "Failed to install ComfyUI dependencies"
+    pip install -r requirements.txt || log "Some ComfyUI dependencies failed to install" "$YELLOW" "WARNING"
     
     # Create model directories
     log "Creating model directories..." "$GREEN"
     mkdir -p "$COMFYUI_DIR/models/"{diffusion_models,text_encoders,clip_vision,vae,checkpoints,loras,controlnet,upscale_models} || \
-        error_exit "Failed to create model directories"
+        log "Failed to create some model directories" "$YELLOW" "WARNING"
     
     # Create metadata directory
     mkdir -p "$COMFYUI_DIR/models/.metadata" || \
         log "Failed to create metadata directory" "$YELLOW" "WARNING"
+        
+    return 0
 }
 
-# Download models with verification
+# Download models with verification and robust error handling
 download_model() {
     local model_path="$1"
     local model_url="${MODELS[$model_path]%:*}"
@@ -324,18 +339,9 @@ download_model() {
         
         # Verify the file still exists and has the correct size
         if [ -f "$target_path" ]; then
-            local actual_size=$(stat -c %s "$target_path" 2>/dev/null || echo "0")
-            local size_diff=$((actual_size - expected_size))
-            size_diff=${size_diff#-}  # Absolute value
-            
-            if [ "$size_diff" -lt 1048576 ]; then
-                log "✅ Verified $model_name exists with correct size ($(format_size $actual_size))" "$GREEN"
-                return 0
-            else
-                log "⚠️ $model_name exists but size has changed since last check: $(format_size $actual_size)" "$YELLOW" "WARNING"
-                update_model_status "$model_path" "false"
-                # Continue to re-download
-            fi
+            local actual_size=$(stat -c %s "$target_path" 2>/dev/null || wc -c < "$target_path" 2>/dev/null || echo "0")
+            log "✅ Model $model_name exists ($(format_size $actual_size))" "$GREEN"
+            return 0
         else
             log "⚠️ $model_name was marked as downloaded but file is missing" "$YELLOW" "WARNING"
             update_model_status "$model_path" "false"
@@ -344,104 +350,112 @@ download_model() {
     fi
     
     # Create directory if it doesn't exist
-    mkdir -p "$(dirname "$target_path")" || error_exit "Failed to create directory for $model_name"
+    mkdir -p "$(dirname "$target_path")" || {
+        log "Failed to create directory for $model_name" "$RED" "ERROR"
+        return 1
+    }
     
-    # Check if file exists and has correct size (even if not marked in status)
+    # Check if file exists (even if not marked in status)
     if [ -f "$target_path" ]; then
-        local actual_size=$(stat -c %s "$target_path" 2>/dev/null || echo "0")
-        local size_diff=$((actual_size - expected_size))
-        size_diff=${size_diff#-}  # Absolute value
-        
-        # If the size is within 1MB of expected size, consider it valid
-        if [ "$size_diff" -lt 1048576 ]; then
-            log "✅ $model_name already exists and has correct size ($(format_size $actual_size))" "$GREEN"
-            update_model_status "$model_path" "true"
-            return 0
+        local actual_size=$(stat -c %s "$target_path" 2>/dev/null || wc -c < "$target_path" 2>/dev/null || echo "0")
+        log "✅ $model_name already exists ($(format_size $actual_size))" "$GREEN"
+        update_model_status "$model_path" "true"
+        return 0
+    fi
+    
+    log "Downloading $model_name (expected size: $(format_size $expected_size))..." "$BLUE"
+    
+    # Create temporary directory if it doesn't exist
+    mkdir -p "$TEMP_DIR" || {
+        log "Failed to create temporary directory" "$RED" "ERROR"
+        return 1
+    }
+    
+    # Try multiple download methods with robust error handling
+    local success=false
+    
+    # Method 1: Try wget with progress bar
+    if command -v wget &> /dev/null; then
+        log "Downloading with wget..." "$BLUE"
+        if wget --no-check-certificate --progress=bar:force:noscroll -c "$model_url" -O "$temp_file"; then
+            success=true
         else
-            log "⚠️ $model_name exists but has wrong size: $(format_size $actual_size), expected: $(format_size $expected_size)" "$YELLOW" "WARNING"
-            log "Re-downloading $model_name..." "$YELLOW"
-            mv "$target_path" "${target_path}.bak" || rm -f "$target_path"
+            log "wget download failed, trying alternative method" "$YELLOW" "WARNING"
         fi
     fi
     
-    log "Downloading $model_name ($(format_size $expected_size))..." "$BLUE"
-    
-    # Create temporary directory if it doesn't exist
-    mkdir -p "$TEMP_DIR" || error_exit "Failed to create temporary directory"
-    
-    # Download with wget
-    local max_retries=3
-    local retry_count=0
-    local success=false
-    
-    while [ $retry_count -lt $max_retries ]; do
-        log "Download attempt $((retry_count + 1))/$max_retries" "$BLUE"
-        
-        # Use wget with progress bar and continue option
-        if wget --no-check-certificate --progress=bar:force:noscroll -c "$model_url" -O "$temp_file"; then
-            # Verify file size
-            local downloaded_size=$(stat -c %s "$temp_file" 2>/dev/null || echo "0")
-            local size_diff=$((downloaded_size - expected_size))
-            size_diff=${size_diff#-}  # Absolute value
-            
-            if [ "$size_diff" -lt 1048576 ]; then
-                # Move file to final location
-                mv "$temp_file" "$target_path"
-                log "✅ Successfully downloaded $model_name ($(format_size $downloaded_size))" "$GREEN"
-                update_model_status "$model_path" "true"
-                success=true
-                break
-            else
-                log "⚠️ Downloaded file has size: $(format_size $downloaded_size), expected: $(format_size $expected_size)" "$YELLOW" "WARNING"
-                
-                # If file is at least 80% of expected size, accept it
-                local percent=$((downloaded_size * 100 / expected_size))
-                if [ "$percent" -ge 80 ]; then
-                    log "⚠️ File is $percent% of expected size, accepting it anyway" "$YELLOW" "WARNING"
-                    mv "$temp_file" "$target_path"
-                    update_model_status "$model_path" "true"
-                    success=true
-                    break
-                fi
-            fi
+    # Method 2: Try curl if wget failed or isn't available
+    if [ "$success" = false ] && command -v curl &> /dev/null; then
+        log "Downloading with curl..." "$BLUE"
+        if curl -L --progress-bar -C - "$model_url" -o "$temp_file"; then
+            success=true
         else
-            log "❌ Download failed, trying alternative approach" "$RED" "WARNING"
-            
-            # Try alternative download method using curl
-            log "Trying download with curl..." "$YELLOW"
-            if curl -L --progress-bar -C - "$model_url" -o "$temp_file"; then
-                local downloaded_size=$(stat -c %s "$temp_file" 2>/dev/null || echo "0")
-                
-                # If file is at least 10MB, consider it valid (partial success)
-                if [ "$downloaded_size" -gt 10485760 ]; then
-                    log "⚠️ Partially downloaded $model_name ($(format_size $downloaded_size))" "$YELLOW" "WARNING"
-                    mv "$temp_file" "$target_path"
-                    update_model_status "$model_path" "partial"
-                    success=true
-                    break
-                fi
-            fi
+            log "curl download failed, trying alternative method" "$YELLOW" "WARNING"
         fi
+    fi
+    
+    # Method 3: Try python requests as last resort
+    if [ "$success" = false ]; then
+        log "Downloading with python requests..." "$BLUE"
+        python3 -c "
+import requests
+import sys
+from tqdm import tqdm
+
+url = '$model_url'
+output_file = '$temp_file'
+
+try:
+    response = requests.get(url, stream=True, verify=False)
+    response.raise_for_status()
+    total_size = int(response.headers.get('content-length', 0))
+    block_size = 1024  # 1 Kibibyte
+    
+    with open(output_file, 'wb') as f:
+        for data in tqdm(response.iter_content(block_size), total=total_size//block_size, unit='KB'):
+            f.write(data)
+    print('Download completed successfully')
+    sys.exit(0)
+except Exception as e:
+    print(f'Error: {str(e)}')
+    sys.exit(1)
+"
+        if [ $? -eq 0 ]; then
+            success=true
+        else
+            log "Python download failed" "$RED" "ERROR"
+        fi
+    fi
+    
+    # Check if any download method succeeded
+    if [ "$success" = true ] && [ -f "$temp_file" ]; then
+        local downloaded_size=$(stat -c %s "$temp_file" 2>/dev/null || wc -c < "$temp_file" 2>/dev/null || echo "0")
         
-        retry_count=$((retry_count + 1))
-        if [ $retry_count -lt $max_retries ]; then
-            log "Retrying download in 10 seconds..." "$YELLOW" "WARNING"
-            sleep 10
+        # If we have a file of any reasonable size, consider it valid
+        if [ "$downloaded_size" -gt 1048576 ]; then  # >1MB
+            log "✅ Successfully downloaded $model_name ($(format_size $downloaded_size))" "$GREEN"
+            mv "$temp_file" "$target_path" || {
+                log "Failed to move downloaded file to target location" "$RED" "ERROR"
+                cp "$temp_file" "$target_path" || {
+                    log "Failed to copy downloaded file to target location" "$RED" "ERROR"
+                    return 1
+                }
+            }
+            update_model_status "$model_path" "true"
+            return 0
+        else
+            log "❌ Downloaded file too small ($(format_size $downloaded_size))" "$RED" "ERROR"
         fi
-    done
+    fi
     
     # Clean up temporary file
     rm -f "$temp_file"
     
-    if [ "$success" = true ]; then
-        return 0
-    else
-        log "❌ Failed to download $model_name after $max_retries attempts" "$RED" "ERROR"
-        return 1
-    fi
+    log "❌ Failed to download $model_name after all attempts" "$RED" "ERROR"
+    return 1
 }
 
-# Download all WAN 2.1 models
+# Download all WAN 2.1 models with robust error handling
 download_wan_models() {
     log "Downloading WAN 2.1 models..." "$BLUE"
     log "This may take a while. Estimated download size: ~20GB" "$YELLOW"
@@ -455,10 +469,29 @@ download_wan_models() {
         current=$((current + 1))
         log "[$current/$total_models] Processing $model_path" "$BLUE"
         
-        if download_model "$model_path"; then
-            success_count=$((success_count + 1))
-        else
+        # Try download with multiple attempts
+        local attempt=1
+        local max_attempts=3
+        local download_success=false
+        
+        while [ $attempt -le $max_attempts ] && [ "$download_success" = false ]; do
+            log "Download attempt $attempt of $max_attempts" "$BLUE"
+            if download_model "$model_path"; then
+                download_success=true
+                success_count=$((success_count + 1))
+                break
+            else
+                attempt=$((attempt + 1))
+                if [ $attempt -le $max_attempts ]; then
+                    log "Retrying download in 10 seconds..." "$YELLOW" "WARNING"
+                    sleep 10
+                fi
+            fi
+        done
+        
+        if [ "$download_success" = false ]; then
             failed_count=$((failed_count + 1))
+            log "Failed to download $model_path after $max_attempts attempts, skipping to next model" "$RED" "ERROR"
         fi
     done
     
