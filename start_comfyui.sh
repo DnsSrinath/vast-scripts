@@ -124,6 +124,20 @@ echo "Checkpoint files will always be loaded safely."
 CONTAINER_IP=$(hostname -i)
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Access ComfyUI at: http://${CONTAINER_IP}:8188"
 
+# Check ComfyUI directory structure
+if [ ! -d "/workspace/ComfyUI" ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Error: ComfyUI directory not found at /workspace/ComfyUI"
+    exit 1
+fi
+
+# Check for required directories
+for dir in "models" "models/checkpoints" "models/vae" "models/loras" "models/upscale_models" "models/embeddings" "models/hypernetworks" "models/controlnet" "models/gligen"; do
+    if [ ! -d "/workspace/ComfyUI/$dir" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Creating directory: /workspace/ComfyUI/$dir"
+        mkdir -p "/workspace/ComfyUI/$dir"
+    fi
+done
+
 # Create a startup script that will be executed when the container starts
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Creating container startup script..."
 cat > /workspace/container_startup.sh << 'EOF'
@@ -134,9 +148,29 @@ if pgrep -f "python3.*main.py" > /dev/null; then
     exit 0
 fi
 
-# Start ComfyUI
-cd /workspace/ComfyUI
-python3 main.py --listen 0.0.0.0 --port 8188
+# Check if CUDA is available
+if command -v nvidia-smi &> /dev/null && python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+    echo "Starting ComfyUI with CUDA support..."
+    cd /workspace/ComfyUI
+    python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+else
+    echo "Starting ComfyUI in CPU mode..."
+    cd /workspace/ComfyUI
+    CUDA_VISIBLE_DEVICES="" PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+fi
+
+# Wait for ComfyUI to start
+sleep 5
+
+# Check if ComfyUI started successfully
+if pgrep -f "python3.*main.py" > /dev/null; then
+    echo "ComfyUI started successfully!"
+    touch /workspace/.comfyui_started
+else
+    echo "Failed to start ComfyUI!"
+    echo "Check /workspace/ComfyUI/comfyui.log for details"
+    exit 1
+fi
 EOF
 
 chmod +x /workspace/container_startup.sh
@@ -161,15 +195,6 @@ cd /workspace/ComfyUI || {
 if [ ! -f "main.py" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Error: main.py not found in ComfyUI directory"
     exit 1
-fi
-
-# Create or modify extra_model_paths.yaml for CPU mode
-if [ "$USE_CUDA" = false ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Configuring ComfyUI for CPU mode..."
-    cat > extra_model_paths.yaml << 'EOF'
-cpu_only: true
-device_mode: cpu
-EOF
 fi
 
 # Start ComfyUI with appropriate device
