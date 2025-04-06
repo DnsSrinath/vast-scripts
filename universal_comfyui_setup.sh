@@ -1078,6 +1078,7 @@ download_model() {
     local output_path="$2"
     local expected_size="$3"
     local model_name=$(basename "$output_path")
+    local temp_file="${output_path}.tmp"
     
     # Validate parameters
     if [ -z "$url" ] || [ -z "$output_path" ]; then
@@ -1115,23 +1116,31 @@ download_model() {
     fi
     
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Downloading $model_name..."
-    if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$output_path"; then
-        local downloaded_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null || echo "0")
+    if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$temp_file"; then
+        local downloaded_size=$(stat -f %z "$temp_file" 2>/dev/null || stat -c %s "$temp_file" 2>/dev/null || echo "0")
         # Allow for small size differences (up to 1MB) due to filesystem differences
         local size_diff=$((downloaded_size - expected_size))
         if [ ${size_diff#-} -le 1048576 ] || [ "$downloaded_size" = "$expected_size" ]; then
+            mv "$temp_file" "$output_path" || {
+                log "Failed to move downloaded file to final location" "$RED" "ERROR"
+                rm -f "$temp_file"
+                return 1
+            }
             manage_metadata "update" "$output_path" "$downloaded_size"
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Successfully downloaded $model_name ($downloaded_size bytes)"
             return 0
         else
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Downloaded file size mismatch for $model_name ($downloaded_size vs $expected_size bytes)"
-            rm -f "$output_path" || {
-                log "Failed to remove invalid file $output_path" "$RED" "ERROR"
+            rm -f "$temp_file" || {
+                log "Failed to remove invalid file $temp_file" "$RED" "ERROR"
             }
             return 1
         fi
     else
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Failed to download $model_name"
+        rm -f "$temp_file" || {
+            log "Failed to remove temporary file $temp_file" "$RED" "ERROR"
+        }
         return 1
     fi
 }
