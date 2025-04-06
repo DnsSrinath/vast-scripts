@@ -1030,10 +1030,6 @@ main() {
         mkdir -p "$COMFYUI_DIR/models/diffusion_models"
         mkdir -p "$COMFYUI_DIR/models/vae"
         
-        # Create metadata directory if it doesn't exist
-        local metadata_dir="$COMFYUI_DIR/models/.metadata"
-        mkdir -p "$metadata_dir"
-        
         # Define models with their paths and URLs
         declare -A models=(
             ["clip_vision/clip_vision_h.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
@@ -1051,7 +1047,6 @@ main() {
         
         for model_path in "${!models[@]}"; do
             local target_path="$COMFYUI_DIR/models/$model_path"
-            local metadata_path="$metadata_dir/$(basename "$model_path").meta"
             local url="${models[$model_path]}"
             
             log "[$count/${#models[@]}] Checking $model_path..." "$BLUE"
@@ -1060,32 +1055,15 @@ main() {
             if [ -f "$target_path" ]; then
                 local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
                 if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
-                    # Check if metadata exists and matches
-                    if [ -f "$metadata_path" ]; then
-                        local stored_size=$(cat "$metadata_path" | grep "^size=" | cut -d'=' -f2)
-                        if [ "$stored_size" = "$size" ]; then
-                            log "✅ $model_path already exists with valid size ($(format_size $size))" "$GREEN"
-                            files_to_skip+=("$model_path")
-                        else
-                            log "⚠️ $model_path exists but metadata size mismatch ($(format_size $size) vs $(format_size $stored_size))" "$YELLOW" "WARNING"
-                            files_to_download+=("$model_path")
-                        fi
-                    else
-                        log "✅ $model_path already exists with valid size ($(format_size $size))" "$GREEN"
-                        # Create metadata file
-                        echo "size=$size" > "$metadata_path"
-                        echo "timestamp=$(date +%s)" >> "$metadata_path"
-                        files_to_skip+=("$model_path")
-                    fi
+                    log "✅ $model_path already exists with valid size ($(format_size $size))" "$GREEN"
+                    files_to_skip+=("$model_path")
                 else
                     log "⚠️ $model_path exists but may be incomplete ($(format_size $size))" "$YELLOW" "WARNING"
                     rm -f "$target_path"  # Remove incomplete file
-                    rm -f "$metadata_path"  # Remove metadata file if it exists
                     files_to_download+=("$model_path")
                 fi
             else
                 log "❌ $model_path missing, will download" "$YELLOW" "WARNING"
-                rm -f "$metadata_path"  # Remove metadata file if it exists
                 files_to_download+=("$model_path")
             fi
             
@@ -1107,7 +1085,6 @@ main() {
         
         for model_path in "${files_to_download[@]}"; do
             local target_path="$COMFYUI_DIR/models/$model_path"
-            local metadata_path="$metadata_dir/$(basename "$model_path").meta"
             local url="${models[$model_path]}"
             
             log "Downloading $model_path..." "$BLUE"
@@ -1131,15 +1108,11 @@ main() {
                     local downloaded_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
                     if [ "$downloaded_size" -gt 1048576 ]; then  # 1MB in bytes
                         log "✅ Successfully downloaded $model_path ($(format_size $downloaded_size))" "$GREEN"
-                        # Create metadata file
-                        echo "size=$downloaded_size" > "$metadata_path"
-                        echo "timestamp=$(date +%s)" >> "$metadata_path"
                         download_ok=true
                         break
                     else
                         log "⚠️ Downloaded file is too small ($(format_size $downloaded_size))" "$YELLOW" "WARNING"
                         rm -f "$target_path"  # Remove incomplete file
-                        rm -f "$metadata_path"  # Remove metadata file if it exists
                     fi
                 fi
                 
@@ -1163,19 +1136,11 @@ main() {
         
         for model_path in "${!models[@]}"; do
             local target_path="$COMFYUI_DIR/models/$model_path"
-            local metadata_path="$metadata_dir/$(basename "$model_path").meta"
             
             if [ -f "$target_path" ]; then
                 local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
                 if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
-                    if [ -f "$metadata_path" ]; then
-                        log "✅ $model_path verified with metadata ($(format_size $size))" "$GREEN"
-                    else
-                        log "✅ $model_path verified but missing metadata ($(format_size $size))" "$BLUE"
-                        # Create metadata file
-                        echo "size=$size" > "$metadata_path"
-                        echo "timestamp=$(date +%s)" >> "$metadata_path"
-                    fi
+                    log "✅ $model_path verified ($(format_size $size))" "$GREEN"
                 else
                     log "❌ $model_path is too small ($(format_size $size))" "$RED" "ERROR"
                     all_valid=false
