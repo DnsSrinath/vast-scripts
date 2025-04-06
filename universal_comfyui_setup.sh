@@ -722,13 +722,8 @@ display_plan() {
     log "           PLAN COMPLETE                     " "$BLUE"
     log "=============================================" "$BLUE"
     
-    # Ask for confirmation
-    log "Do you want to proceed with the installation? (y/n)" "$YELLOW"
-    read -r response
-    if [[ "$response" != "y" && "$response" != "Y" ]]; then
-        log "Installation cancelled by user" "$RED" "ERROR"
-        exit 1
-    fi
+    # Log that we're proceeding with installation
+    log "Proceeding with automatic installation..." "$GREEN"
 }
 
 # Function to display installation summary
