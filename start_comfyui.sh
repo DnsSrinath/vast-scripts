@@ -163,13 +163,22 @@ if [ ! -f "main.py" ]; then
     exit 1
 fi
 
+# Create or modify extra_model_paths.yaml for CPU mode
+if [ "$USE_CUDA" = false ]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Configuring ComfyUI for CPU mode..."
+    cat > extra_model_paths.yaml << 'EOF'
+cpu_only: true
+device_mode: cpu
+EOF
+fi
+
 # Start ComfyUI with appropriate device
 if [ "$USE_CUDA" = true ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ComfyUI with CUDA support..."
     nohup python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ComfyUI in CPU mode..."
-    CUDA_VISIBLE_DEVICES="" nohup python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
+    CUDA_VISIBLE_DEVICES="" PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32 python3 main.py --listen 0.0.0.0 --port 8188 > comfyui.log 2>&1 &
 fi
 
 # Wait for ComfyUI to start
