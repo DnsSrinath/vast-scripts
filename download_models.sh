@@ -8,9 +8,9 @@ NC='\033[0m' # No Color
 
 # Models configuration
 MODELS=(
-    "https://huggingface.co/camenduru/wan2/resolve/main/wan_2.1_vae.safetensors wan_2.1_vae.safetensors vae"
-    "https://huggingface.co/camenduru/wan2/resolve/main/umt5_xxl_fp8_e4m3fn_scaled.safetensors umt5_xxl_fp8_e4m3fn_scaled.safetensors text_encoders"
-    "https://huggingface.co/camenduru/wan2/resolve/main/wan2.1_t2v_1.3B_fp16.safetensors wan2.1_t2v_1.3B_fp16.safetensors diffusion_models"
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors wan_2.1_vae.safetensors vae"
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors umt5_xxl_fp8_e4m3fn_scaled.safetensors text_encoders"
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors wan2.1_t2v_14B_fp8_scaled.safetensors diffusion_models"
 )
 
 # Create models directories
