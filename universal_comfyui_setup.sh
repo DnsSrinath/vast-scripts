@@ -400,94 +400,37 @@ main() {
     
     # Install required Python packages
     log "Installing required Python packages..." "$GREEN"
-    run_command "pip install --upgrade huggingface_hub tqdm requests aiohttp" "Failed to install Python packages" || \
+    run_command "pip install --upgrade requests tqdm" "Failed to install Python packages" || \
         error_exit "Failed to install required Python packages"
     
-    # Download models using huggingface_hub
+    # Download models using direct download
     cd "$COMFYUI_DIR/models" || error_exit "Failed to change to models directory"
     
-    # Create a Python script for downloading models with progress tracking
+    # Create a simple Python script for downloading
     cat > download_models.py << 'EOF'
 import os
 import sys
-import time
-import asyncio
-import aiohttp
 import requests
-import logging
-from pathlib import Path
-from huggingface_hub import hf_hub_download, login
 from tqdm import tqdm
 
-# Immediate startup feedback
-print("\n" + "="*80)
-print("STARTING MODEL DOWNLOAD SCRIPT")
-print("="*80)
-print("Initializing...")
-sys.stdout.flush()
-
-# Debug information
-print("\nDebug Information:")
-print(f"Python version: {sys.version}")
-print(f"Current directory: {os.getcwd()}")
-print("="*80 + "\n")
-sys.stdout.flush()
-
-# Set up logging with immediate flush
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("model_download.log", mode='w'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
-
-print("Logging system initialized")
-sys.stdout.flush()
-
-def test_connection():
-    """Test connection to Hugging Face."""
-    print("\nTesting connection to Hugging Face...")
-    sys.stdout.flush()
-    try:
-        response = requests.get("https://huggingface.co", timeout=10)
-        if response.status_code == 200:
-            print("✅ Connection to Hugging Face successful")
-            return True
-        else:
-            print(f"❌ Connection failed with status code: {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"❌ Connection test failed: {e}")
-        return False
-
-def download_with_progress(url, local_path, desc):
+def download_file(url, local_path):
     """Download a file with progress bar."""
-    print(f"\nStarting download of {desc}")
-    print(f"URL: {url}")
-    print(f"Local path: {local_path}")
-    sys.stdout.flush()
-    
     try:
         # Get file size
-        print("Checking file size...")
-        sys.stdout.flush()
+        print(f"\nChecking file size for {url}")
         response = requests.head(url, timeout=10)
         total_size = int(response.headers.get('content-length', 0))
         total_size_mb = total_size / (1024 * 1024)
         
         print(f"File size: {total_size_mb:.2f} MB")
         print(f"Estimated time at 5 MB/s: {total_size_mb / 5:.2f} minutes")
-        sys.stdout.flush()
         
         # Download with progress bar
         response = requests.get(url, stream=True, timeout=30)
         response.raise_for_status()
         
         with open(local_path, 'wb') as f, tqdm(
-            desc=desc,
+            desc=os.path.basename(local_path),
             total=total_size,
             unit='B',
             unit_scale=True,
@@ -498,7 +441,7 @@ def download_with_progress(url, local_path, desc):
                     f.write(chunk)
                     pbar.update(len(chunk))
         
-        print(f"✅ Download completed: {desc}")
+        print(f"✅ Download completed: {os.path.basename(local_path)}")
         return True
     except Exception as e:
         print(f"❌ Download failed: {e}")
@@ -506,14 +449,6 @@ def download_with_progress(url, local_path, desc):
 
 def main():
     """Main download function."""
-    print("\nStarting main download process...")
-    sys.stdout.flush()
-    
-    # Test connection first
-    if not test_connection():
-        print("❌ Connection test failed. Aborting download.")
-        sys.exit(1)
-    
     # Model repository and files
     repo_id = "DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S"
     
@@ -533,7 +468,6 @@ def main():
     for i, model in enumerate(models, 1):
         print(f"{i}. {model['file']} -> {model['dir']}")
     print("="*80 + "\n")
-    sys.stdout.flush()
     
     # Download each file
     for i, model in enumerate(models, 1):
@@ -541,7 +475,6 @@ def main():
         file_name = model["file"]
         
         print(f"\n[{i}/{len(models)}] Downloading {file_name} to {dir_name}...")
-        sys.stdout.flush()
         
         # Create directory if it doesn't exist
         os.makedirs(dir_name, exist_ok=True)
@@ -549,12 +482,11 @@ def main():
         
         # Download file
         url = f"https://huggingface.co/{repo_id}/resolve/main/{file_name}"
-        if not download_with_progress(url, local_path, f"Downloading {file_name}"):
+        if not download_file(url, local_path):
             print(f"❌ Failed to download {file_name}")
             sys.exit(1)
     
     print("\n✅ All downloads completed successfully!")
-    sys.stdout.flush()
 
 if __name__ == "__main__":
     try:
