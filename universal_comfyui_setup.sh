@@ -12,6 +12,7 @@ BASE_RAW_URL="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 WORKSPACE="/workspace"
 COMFYUI_DIR="${WORKSPACE}/ComfyUI"
 DIAGNOSTIC_LOG="${WORKSPACE}/comfyui_universal_setup.log"
+LOG_FILE="$DIAGNOSTIC_LOG"  # Use the same log file for all messages
 TEMP_DIR="${WORKSPACE}/temp_setup"
 REQUIREMENTS_FILE="${WORKSPACE}/requirements.txt"
 
@@ -1633,7 +1634,10 @@ initialize_model_sizes() {
     log "Initializing model sizes for $total_models models..." "$BLUE"
     
     for model_info in "${MODELS[@]}"; do
-        IFS=':' read -r path url <<< "$model_info"
+        # Carefully parse the model info to handle URLs with colons correctly
+        path=$(echo "$model_info" | cut -d: -f1)
+        url=$(echo "$model_info" | cut -d: -f2-)  # This preserves the URL including colons
+        
         local model_name=$(basename "$path")
         processed=$((processed + 1))
         
@@ -1881,7 +1885,11 @@ main() {
     local skipped=0
     
     for model_info in "${MODELS[@]}"; do
-        IFS=':' read -r path size url <<< "$model_info"
+        # Carefully parse the model info to handle URLs with colons correctly
+        path=$(echo "$model_info" | cut -d: -f1)
+        url=$(echo "$model_info" | cut -d: -f2-)  # This preserves the URL including colons
+        size=$(echo "$model_info" | cut -d: -f2)  # Get the size from the middle field
+        
         output_path="$COMFYUI_DIR/models/$path"
         model_name=$(basename "$path")
         processed=$((processed + 1))
@@ -1906,17 +1914,26 @@ main() {
         
         # Download the model
         log "Downloading $model_name ($(format_size "$size"))..." "$BLUE"
-        if download_model "$url" "$output_path" "$size"; then
-            # Verify the downloaded file
-            if verify_model_file "$output_path" "$size"; then
-                log "✅ Successfully downloaded and verified $model_name" "$GREEN"
-                success=$((success + 1))
+        log "URL: $url" "$BLUE"  # Log the URL for debugging
+        
+        if [ -n "$url" ] && [ -n "$output_path" ]; then
+            if download_model "$url" "$output_path" "$size"; then
+                # Verify the downloaded file
+                if verify_model_file "$output_path" "$size"; then
+                    log "✅ Successfully downloaded and verified $model_name" "$GREEN"
+                    success=$((success + 1))
+                else
+                    log "❌ Downloaded $model_name but verification failed" "$RED" "ERROR"
+                    failed=$((failed + 1))
+                fi
             else
-                log "❌ Downloaded $model_name but verification failed" "$RED" "ERROR"
+                log "❌ Failed to download $model_name" "$RED" "ERROR"
                 failed=$((failed + 1))
             fi
         else
-            log "❌ Failed to download $model_name" "$RED" "ERROR"
+            log "❌ Invalid parameters for $model_name: URL or output path is empty" "$RED" "ERROR"
+            log "  URL: '$url'" "$RED" "ERROR"
+            log "  Output path: '$output_path'" "$RED" "ERROR"
             failed=$((failed + 1))
         fi
     done
