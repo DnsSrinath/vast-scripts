@@ -778,13 +778,13 @@ update_installation_status() {
     if [ -z "$step" ] || [ -z "$status" ]; then
         log "Invalid parameters for update_installation_status" "$RED" "ERROR"
         return 1
-    }
+    fi
     
     # Check if status file exists
     if [ ! -f "$status_file" ]; then
         log "Status file not found" "$RED" "ERROR"
         return 1
-    }
+    fi
     
     # Update status with proper error handling
     if ! sed -i "s/^$step: .*/$step: $status/" "$status_file"; then
