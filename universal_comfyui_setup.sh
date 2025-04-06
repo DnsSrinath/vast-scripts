@@ -1067,7 +1067,7 @@ check_cuda_compatibility() {
         fi
     fi
     
-    # Perform CUDA check
+    # Perform CUDA check with timeout
     local cuda_available=0
     if command -v nvidia-smi &> /dev/null; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] NVIDIA GPU detected, checking CUDA compatibility..."
@@ -1077,12 +1077,12 @@ check_cuda_compatibility() {
         export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
         export PATH=$CUDA_HOME/bin:$PATH
         
-        # Check CUDA driver version
-        local cuda_driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
+        # Check CUDA driver version with timeout
+        local cuda_driver_version=$(timeout 5 nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA Driver Version: $cuda_driver_version"
         
-        # Try to verify CUDA is working
-        if python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
+        # Try to verify CUDA is working with timeout
+        if timeout 10 python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null | grep -q "True"; then
             cuda_available=1
             echo "[$(date '+%Y-%m-%d %H:%M:%S')] CUDA is available and working"
         else
