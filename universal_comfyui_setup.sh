@@ -752,7 +752,7 @@ EOF
     if [ ! -f "$plan_file" ] || [ ! -f "$status_file" ]; then
         log "Metadata files not found" "$RED" "ERROR"
         return 1
-    }
+    fi
     
     # Display the plan with proper error handling
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ============================================="
