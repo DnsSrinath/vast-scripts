@@ -983,6 +983,7 @@ main() {
         
         for model_path in "${!models[@]}"; do
             local target_path="$COMFYUI_DIR/models/$model_path"
+            local marker_path="$target_path.downloaded"
             local url="${models[$model_path]}"
             
             log "[$count/${#models[@]}] Checking $model_path..." "$BLUE"
@@ -991,12 +992,19 @@ main() {
             if [ -f "$target_path" ]; then
                 local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
                 if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
-                    log "✅ $model_path already exists with valid size ($(format_size $size))" "$GREEN"
+                    if [ -f "$marker_path" ]; then
+                        log "✅ $model_path already exists and was downloaded in this session ($(format_size $size))" "$GREEN"
+                    else
+                        log "⏭️ $model_path already exists from a previous session ($(format_size $size))" "$BLUE"
+                        # Create marker file to indicate this file was "downloaded" in this session
+                        touch "$marker_path"
+                    fi
                     count=$((count + 1))
                     continue
                 else
                     log "⚠️ $model_path exists but may be incomplete ($(format_size $size))" "$YELLOW" "WARNING"
                     rm -f "$target_path"  # Remove incomplete file
+                    rm -f "$marker_path"  # Remove marker file if it exists
                 fi
             fi
             
@@ -1007,18 +1015,29 @@ main() {
             download_success=false
             
             while [ $retry_count -lt $max_retries ]; do
-                if wget --no-check-certificate --retry-connrefused --retry-on-http-error=503 \
-                    --tries=5 --continue --timeout=60 --waitretry=30 \
-                    -O "$target_path" "$url" 2>/dev/null; then
+                # Use wget with progress bar and file size information
+                if wget --progress=bar:force:noscroll \
+                    --no-check-certificate \
+                    --retry-connrefused \
+                    --retry-on-http-error=503 \
+                    --tries=5 \
+                    --continue \
+                    --timeout=60 \
+                    --waitretry=30 \
+                    --show-progress \
+                    -O "$target_path" "$url" 2>&1; then
                     # Verify the downloaded file
                     local downloaded_size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
                     if [ "$downloaded_size" -gt 1048576 ]; then  # 1MB in bytes
                         log "✅ Successfully downloaded $model_path ($(format_size $downloaded_size))" "$GREEN"
+                        # Create marker file to indicate this file was downloaded in this session
+                        touch "$marker_path"
                         download_success=true
                         break
                     else
                         log "⚠️ Downloaded file is too small ($(format_size $downloaded_size))" "$YELLOW" "WARNING"
                         rm -f "$target_path"  # Remove incomplete file
+                        rm -f "$marker_path"  # Remove marker file if it exists
                     fi
                 fi
                 
@@ -1045,11 +1064,16 @@ main() {
         
         for model_path in "${!models[@]}"; do
             local target_path="$COMFYUI_DIR/models/$model_path"
+            local marker_path="$target_path.downloaded"
             
             if [ -f "$target_path" ]; then
                 local size=$(stat -c%s "$target_path" 2>/dev/null || echo 0)
                 if [ "$size" -gt 1048576 ]; then  # 1MB in bytes
-                    log "✅ $model_path verified ($(format_size $size))" "$GREEN"
+                    if [ -f "$marker_path" ]; then
+                        log "✅ $model_path verified (downloaded in this session, $(format_size $size))" "$GREEN"
+                    else
+                        log "✅ $model_path verified (from previous session, $(format_size $size))" "$BLUE"
+                    fi
                 else
                     log "❌ $model_path is too small ($(format_size $size))" "$RED" "ERROR"
                     all_valid=false
