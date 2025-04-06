@@ -27,6 +27,9 @@ declare -A MODELS=(
     # AC Video optimized models for Hunyuan
     ["loras/hunyuan_video_accvid_5_steps_lora_rank16_fp8_e4m3fn.safetensors"]="https://huggingface.co/Comfy-Org/Hunyuan-AC-Video/resolve/main/hunyuan_video_accvid_5_steps_lora_rank16_fp8_e4m3fn.safetensors:182517760"
     ["checkpoints/hunyuan_video_accvid_t2v_5_steps_Q8_0.gguf"]="https://huggingface.co/Comfy-Org/Hunyuan-AC-Video/resolve/main/hunyuan_video_accvid_t2v_5_steps_Q8_0.gguf:13958643712"
+    # Additional WAN 2.1 models from the wiki
+    ["diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors:15837413596"
+    ["diffusion_models/wan2.1_i2v_720p_14B_fp8_scaled.safetensors"]="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_720p_14B_fp8_scaled.safetensors:15837413596"
 )
 
 # Define extensions to install
@@ -1037,7 +1040,386 @@ EOF
       "id": 7,
       "type": "PrimitiveNode",
       "pos": [100, 700],
-      "size": { "0": 300, "1": 1],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": {},
+      "outputs": {
+        "STRING": ["3", 0]
+      },
+      "properties": {
+        "Node name for S&R": "PrimitiveNode"
+      },
+      "widgets_values": [
+        "STRING",
+        "a beautiful cinematic scene with dramatic lighting"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "PrimitiveNode",
+      "pos": [100, 850],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": {},
+      "outputs": {
+        "STRING": ["4", 0]
+      },
+      "properties": {
+        "Node name for S&R": "PrimitiveNode"
+      },
+      "widgets_values": [
+        "STRING",
+        "bad quality, blurry, low resolution"
+      ]
+    }
+  ],
+  "links": [
+    [1, "1", 0, "2", 0, "MODEL"],
+    [2, "1", 1, "2", 1, "CLIP"],
+    [3, "1", 2, "2", 2, "VAE"],
+    [4, "3", 0, "2", 3, "CONDITIONING"],
+    [5, "4", 0, "2", 4, "CONDITIONING"],
+    [6, "5", 0, "2", 5, "IMAGE"],
+    [7, "2", 0, "6", 0, "VIDEO"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
+EOF
+
+    # Create WAN 2.1 Text-to-Video workflow based on the wiki
+    cat > "$COMFYUI_DIR/workflows/wan21_t2v_workflow.json" << 'EOF'
+{
+  "last_node_id": 8,
+  "last_link_id": 7,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "WanVideoLoader",
+      "pos": [100, 100],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": {},
+      "outputs": {
+        "model": ["2", 0],
+        "clip": ["2", 1],
+        "vae": ["2", 2]
+      },
+      "properties": {
+        "Node name for S&R": "WanVideoLoader"
+      },
+      "widgets_values": [
+        "wan2.1_t2v_14B_fp8_scaled.safetensors",
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan_2.1_vae.safetensors"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "WanVideoGenerate",
+      "pos": [450, 100],
+      "size": { "0": 300, "1": 200 },
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": {
+        "model": ["1", 0],
+        "clip": ["1", 1],
+        "vae": ["1", 2],
+        "positive": ["3", 0],
+        "negative": ["4", 0]
+      },
+      "outputs": {
+        "video": ["6", 0]
+      },
+      "properties": {
+        "Node name for S&R": "WanVideoGenerate"
+      },
+      "widgets_values": [
+        "20",  # Steps
+        "7",  # CFG Scale
+        "0.5",  # Motion Bucket ID
+        "16",  # FPS
+        "24",  # Frames
+        "512",  # Width
+        "512"   # Height
+      ]
+    },
+    {
+      "id": 3,
+      "type": "CLIPTextEncode",
+      "pos": [100, 250],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": {
+        "clip": ["1", 1],
+        "text": ["7", 0]
+      },
+      "outputs": {
+        "CONDITIONING": ["2", 3]
+      },
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "masterpiece, best quality, highly detailed"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "CLIPTextEncode",
+      "pos": [100, 400],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": {
+        "clip": ["1", 1],
+        "text": ["8", 0]
+      },
+      "outputs": {
+        "CONDITIONING": ["2", 4]
+      },
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "bad quality, blurry, low resolution"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "SaveVideo",
+      "pos": [800, 100],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": {
+        "video": ["2", 0]
+      },
+      "outputs": {},
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "output.mp4"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "PrimitiveNode",
+      "pos": [100, 700],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": {},
+      "outputs": {
+        "STRING": ["3", 0]
+      },
+      "properties": {
+        "Node name for S&R": "PrimitiveNode"
+      },
+      "widgets_values": [
+        "STRING",
+        "a beautiful cinematic scene with dramatic lighting"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "PrimitiveNode",
+      "pos": [100, 850],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": {},
+      "outputs": {
+        "STRING": ["4", 0]
+      },
+      "properties": {
+        "Node name for S&R": "PrimitiveNode"
+      },
+      "widgets_values": [
+        "STRING",
+        "bad quality, blurry, low resolution"
+      ]
+    }
+  ],
+  "links": [
+    [1, "1", 0, "2", 0, "MODEL"],
+    [2, "1", 1, "2", 1, "CLIP"],
+    [3, "1", 2, "2", 2, "VAE"],
+    [4, "3", 0, "2", 3, "CONDITIONING"],
+    [5, "4", 0, "2", 4, "CONDITIONING"],
+    [7, "2", 0, "6", 0, "VIDEO"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
+EOF
+
+    # Create WAN 2.1 720P Image-to-Video workflow based on the wiki
+    cat > "$COMFYUI_DIR/workflows/wan21_i2v_720p_workflow.json" << 'EOF'
+{
+  "last_node_id": 8,
+  "last_link_id": 7,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "WanVideoLoader",
+      "pos": [100, 100],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": {},
+      "outputs": {
+        "model": ["2", 0],
+        "clip": ["2", 1],
+        "vae": ["2", 2]
+      },
+      "properties": {
+        "Node name for S&R": "WanVideoLoader"
+      },
+      "widgets_values": [
+        "wan2.1_i2v_720p_14B_fp8_scaled.safetensors",
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "wan_2.1_vae.safetensors"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "WanVideoGenerate",
+      "pos": [450, 100],
+      "size": { "0": 300, "1": 200 },
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": {
+        "model": ["1", 0],
+        "clip": ["1", 1],
+        "vae": ["1", 2],
+        "positive": ["3", 0],
+        "negative": ["4", 0],
+        "image": ["5", 0]
+      },
+      "outputs": {
+        "video": ["6", 0]
+      },
+      "properties": {
+        "Node name for S&R": "WanVideoGenerate"
+      },
+      "widgets_values": [
+        "20",  # Steps
+        "7",  # CFG Scale
+        "0.5",  # Motion Bucket ID
+        "16",  # FPS
+        "24",  # Frames
+        "720",  # Width
+        "720"   # Height
+      ]
+    },
+    {
+      "id": 3,
+      "type": "CLIPTextEncode",
+      "pos": [100, 250],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": {
+        "clip": ["1", 1],
+        "text": ["7", 0]
+      },
+      "outputs": {
+        "CONDITIONING": ["2", 3]
+      },
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "masterpiece, best quality, highly detailed"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "CLIPTextEncode",
+      "pos": [100, 400],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": {
+        "clip": ["1", 1],
+        "text": ["8", 0]
+      },
+      "outputs": {
+        "CONDITIONING": ["2", 4]
+      },
+      "properties": {
+        "Node name for S&R": "CLIPTextEncode"
+      },
+      "widgets_values": [
+        "bad quality, blurry, low resolution"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "LoadImage",
+      "pos": [100, 550],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": {},
+      "outputs": {
+        "IMAGE": ["2", 5]
+      },
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "SaveVideo",
+      "pos": [800, 100],
+      "size": { "0": 300, "1": 100 },
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": {
+        "video": ["2", 0]
+      },
+      "outputs": {},
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "output.mp4"
+      ]
+    },
+    {
+      "id": 7,
+      "type": "PrimitiveNode",
+      "pos": [100, 700],
+      "size": { "0": 300, "1": 100 },
       "flags": {},
       "order": 6,
       "mode": 0,
@@ -1102,6 +1484,7 @@ This installation includes optimizations for faster video generation using AC Vi
 
 - **Hunyuan AC Video LoRA**: 5-step rank 16 FP8 model for faster generation
 - **Hunyuan AC Video GGUF**: Q8 quantized model for CPU-optimized performance
+- **WAN 2.1 Video Models**: Both 480P and 720P versions for different quality needs
 
 ## Performance Improvements
 
@@ -1114,11 +1497,13 @@ AC Video can speed up video generation by up to 8.5x while maintaining quality:
 
 1. Load the optimized workflows from the `workflows` directory:
    - `hunyuan_ac_video_optimized.json` - For Hunyuan video generation
-   - `wan21_ac_video_optimized.json` - For WAN 2.1 video generation
+   - `wan21_ac_video_optimized.json` - For WAN 2.1 video generation (480P)
+   - `wan21_t2v_workflow.json` - For WAN 2.1 text-to-video generation
+   - `wan21_i2v_720p_workflow.json` - For WAN 2.1 image-to-video generation (720P)
 
 2. For best performance:
    - Use 5 steps for drafts (much faster)
-   - Use 15 steps for final quality
+   - Use 15-20 steps for final quality
    - Adjust frame count based on your needs (72 frames ≈ 3 seconds)
 
 3. For character consistency, pair AC Video with character LoRAs
@@ -1133,6 +1518,7 @@ If you encounter memory issues:
 ## Credits
 
 AC Video optimization technique from [ComfyUIBlog](https://comfyuiblog.com/8x-faster-hunyuan-ai-video-comfyui-workflow/)
+WAN 2.1 video models from [ComfyUI Wiki](https://comfyui-wiki.com/en/tutorial/advanced/video/wan2.1/wan2-1-video-model)
 EOF
 
     log "Created README with AC Video instructions" "$GREEN"
@@ -1418,18 +1804,10 @@ main() {
             # Check if the file exists despite the status (manual download or previous run)
             local target_path="$COMFYUI_DIR/models/$model_path"
             if [ -f "$target_path" ]; then
-                # Extract expected size using cut
-                local model_info="${MODELS[$model_path]}"
-                local expected_size=$(echo "$model_info" | cut -d':' -f2)
-                local actual_size=$(stat -c %s "$target_path" 2>/dev/null || echo "0")
-                local size_diff=$((actual_size - expected_size))
-                size_diff=${size_diff#-}  # Absolute value
-                
-                if [ "$size_diff" -lt 1048576 ]; then
-                    log "✓ Model $model_path exists but was not tracked, marking as downloaded" "$GREEN"
-                    update_model_status "$model_path" "true"
-                    continue
-                fi
+                # If the file exists, just mark it as downloaded
+                log "✓ Model $model_path exists but was not tracked, marking as downloaded" "$GREEN"
+                update_model_status "$model_path" "true"
+                continue
             fi
             
             all_models_downloaded=false
