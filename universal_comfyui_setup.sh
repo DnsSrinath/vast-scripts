@@ -430,14 +430,6 @@ sys.stdout.flush()
 print("\nDebug Information:")
 print(f"Python version: {sys.version}")
 print(f"Current directory: {os.getcwd()}")
-print(f"Available packages:")
-try:
-    import pkg_resources
-    installed_packages = [f"{dist.key} {dist.version}" for dist in pkg_resources.working_set]
-    for package in installed_packages:
-        print(f"  - {package}")
-except Exception as e:
-    print(f"Error getting package info: {e}")
 print("="*80 + "\n")
 sys.stdout.flush()
 
@@ -455,269 +447,120 @@ logger = logging.getLogger(__name__)
 print("Logging system initialized")
 sys.stdout.flush()
 
-def print_file_info(file_name, file_size_mb):
-    """Print information about the file being downloaded."""
-    print("\n" + "="*80)
-    print(f"DOWNLOADING: {file_name}")
-    print(f"SIZE: {file_size_mb:.2f} MB")
-    print(f"ESTIMATED TIME (5 MB/s): {file_size_mb / 5:.2f} minutes")
-    print(f"ESTIMATED TIME (10 MB/s): {file_size_mb / 10:.2f} minutes")
-    print(f"ESTIMATED TIME (20 MB/s): {file_size_mb / 20:.2f} minutes")
-    print("="*80 + "\n")
+def test_connection():
+    """Test connection to Hugging Face."""
+    print("\nTesting connection to Hugging Face...")
     sys.stdout.flush()
-
-def log_download_info(file_name, file_size_mb):
-    """Log information about the file being downloaded."""
-    logger.info(f"Downloading {file_name} (Size: {file_size_mb:.2f} MB)")
-    logger.info(f"Estimated download time: {file_size_mb / 5:.2f} minutes at 5 MB/s")
-    logger.info(f"Estimated download time: {file_size_mb / 10:.2f} minutes at 10 MB/s")
-    logger.info(f"Estimated download time: {file_size_mb / 20:.2f} minutes at 20 MB/s")
-    print_file_info(file_name, file_size_mb)
-
-async def download_chunk(session, url, start, end, local_path, progress_bar):
-    """Download a chunk of a file."""
-    headers = {'Range': f'bytes={start}-{end}'}
     try:
-        async with session.get(url, headers=headers, timeout=30) as response:
-            if response.status not in (200, 206):
-                logger.error(f"Failed to download chunk {start}-{end}: HTTP {response.status}")
-                return False
-            chunk = await response.read()
-            with open(local_path, 'rb+') as f:
-                f.seek(start)
-                f.write(chunk)
-            progress_bar.update(len(chunk))
+        response = requests.get("https://huggingface.co", timeout=10)
+        if response.status_code == 200:
+            print("✅ Connection to Hugging Face successful")
             return True
+        else:
+            print(f"❌ Connection failed with status code: {response.status_code}")
+            return False
     except Exception as e:
-        logger.error(f"Error downloading chunk {start}-{end}: {e}")
+        print(f"❌ Connection test failed: {e}")
         return False
 
-async def download_file(url, local_path, desc):
-    """Download a file in chunks with progress bar."""
+def download_with_progress(url, local_path, desc):
+    """Download a file with progress bar."""
+    print(f"\nStarting download of {desc}")
+    print(f"URL: {url}")
+    print(f"Local path: {local_path}")
+    sys.stdout.flush()
+    
     try:
         # Get file size
-        logger.info(f"Checking file size for {url}")
-        print(f"Checking file size for {url}...")
+        print("Checking file size...")
         sys.stdout.flush()
-        
         response = requests.head(url, timeout=10)
         total_size = int(response.headers.get('content-length', 0))
         total_size_mb = total_size / (1024 * 1024)
         
-        if total_size == 0:
-            logger.warning(f"Could not determine file size for {url}")
-            print(f"Warning: Could not determine file size for {url}")
-            sys.stdout.flush()
-            return False
-        
-        logger.info(f"File size: {total_size_mb:.2f} MB")
         print(f"File size: {total_size_mb:.2f} MB")
+        print(f"Estimated time at 5 MB/s: {total_size_mb / 5:.2f} minutes")
         sys.stdout.flush()
         
-        log_download_info(os.path.basename(local_path), total_size_mb)
-
-        # Create progress bar
-        progress_bar = tqdm(total=total_size, desc=desc, unit='B', unit_scale=True)
+        # Download with progress bar
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()
         
-        # Create empty file
-        logger.info(f"Creating empty file: {local_path}")
-        print(f"Creating empty file: {local_path}")
-        sys.stdout.flush()
+        with open(local_path, 'wb') as f, tqdm(
+            desc=desc,
+            total=total_size,
+            unit='B',
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as pbar:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    pbar.update(len(chunk))
         
-        with open(local_path, 'wb') as f:
-            f.write(b'\0' * total_size)
-        
-        # Download in chunks
-        chunk_size = 10 * 1024 * 1024  # 10MB chunks
-        chunks = [(i, min(i + chunk_size - 1, total_size - 1)) 
-                 for i in range(0, total_size, chunk_size)]
-        
-        logger.info(f"Downloading in {len(chunks)} chunks of {chunk_size / (1024 * 1024):.2f} MB each")
-        print(f"Downloading in {len(chunks)} chunks of {chunk_size / (1024 * 1024):.2f} MB each")
-        sys.stdout.flush()
-        
-        start_time = time.time()
-        timeout = aiohttp.ClientTimeout(total=3600)  # 1 hour timeout
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            tasks = [download_chunk(session, url, start, end, local_path, progress_bar) 
-                    for start, end in chunks]
-            results = await asyncio.gather(*tasks)
-            
-        end_time = time.time()
-        download_time = end_time - start_time
-        download_speed = total_size / (1024 * 1024 * download_time)  # MB/s
-        
-        progress_bar.close()
-        logger.info(f"Download completed in {download_time:.2f} seconds at {download_speed:.2f} MB/s")
-        print(f"\nDOWNLOAD COMPLETED: {os.path.basename(local_path)}")
-        print(f"TIME: {download_time:.2f} seconds")
-        print(f"SPEED: {download_speed:.2f} MB/s")
-        print("="*80 + "\n")
-        sys.stdout.flush()
-        return all(results)
+        print(f"✅ Download completed: {desc}")
+        return True
     except Exception as e:
-        logger.error(f"Error downloading {url}: {e}")
-        print(f"Error downloading {url}: {e}")
-        sys.stdout.flush()
+        print(f"❌ Download failed: {e}")
         return False
 
-async def download_model(repo_id, file_name, dir_name):
-    """Download a single model file."""
-    try:
-        logger.info(f"\nPreparing download of {file_name} to {dir_name}...")
-        print(f"\nPreparing download of {file_name} to {dir_name}...")
+def main():
+    """Main download function."""
+    print("\nStarting main download process...")
+    sys.stdout.flush()
+    
+    # Test connection first
+    if not test_connection():
+        print("❌ Connection test failed. Aborting download.")
+        sys.exit(1)
+    
+    # Model repository and files
+    repo_id = "DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S"
+    
+    # Define models in order of size (smallest first)
+    models = [
+        {"dir": "vae", "file": "wan_2.1_vae.safetensors"},
+        {"dir": "clip_vision", "file": "clip_vision_h.safetensors"},
+        {"dir": "text_encoders", "file": "umt5_xxl_fp8_e4m3fn_scaled.safetensors"},
+        {"dir": "diffusion_models", "file": "wan2.1-i2v-14b-480p-Q4_K_S.gguf"}
+    ]
+    
+    print("\n" + "="*80)
+    print("WAN 2.1 MODEL DOWNLOAD")
+    print("="*80)
+    print(f"Total files to download: {len(models)}")
+    print("Files to download:")
+    for i, model in enumerate(models, 1):
+        print(f"{i}. {model['file']} -> {model['dir']}")
+    print("="*80 + "\n")
+    sys.stdout.flush()
+    
+    # Download each file
+    for i, model in enumerate(models, 1):
+        dir_name = model["dir"]
+        file_name = model["file"]
+        
+        print(f"\n[{i}/{len(models)}] Downloading {file_name} to {dir_name}...")
         sys.stdout.flush()
         
-        # Ensure directory exists
+        # Create directory if it doesn't exist
         os.makedirs(dir_name, exist_ok=True)
         local_path = os.path.join(dir_name, file_name)
         
-        # Try downloading with huggingface_hub first
-        try:
-            logger.info(f"Attempting to download {file_name} using huggingface_hub...")
-            print(f"\nDOWNLOADING: {file_name}")
-            print("METHOD: Hugging Face Hub")
-            print("="*80)
-            sys.stdout.flush()
-            
-            hf_hub_download(
-                repo_id=repo_id,
-                filename=file_name,
-                local_dir=dir_name,
-                local_dir_use_symlinks=False,
-                resume_download=True,
-                force_download=True
-            )
-            logger.info(f"Successfully downloaded {file_name} using huggingface_hub")
-            print(f"\nDOWNLOAD COMPLETED: {file_name}")
-            print("="*80 + "\n")
-            sys.stdout.flush()
-            return True
-        except Exception as e:
-            logger.error(f"Failed to download with huggingface_hub: {e}")
-            logger.info("Trying direct download...")
-            print(f"\nHugging Face Hub download failed, trying direct download...")
-            print(f"Error: {e}")
-            sys.stdout.flush()
-        
-        # Try direct download as fallback
+        # Download file
         url = f"https://huggingface.co/{repo_id}/resolve/main/{file_name}"
-        return await download_file(url, local_path, f"Downloading {file_name}")
-        
-    except Exception as e:
-        logger.error(f"Error preparing download of {file_name}: {e}")
-        print(f"Error preparing download of {file_name}: {e}")
-        sys.stdout.flush()
-        return False
-
-async def download_models():
-    """Download all models asynchronously."""
-    try:
-        # Model repository and files
-        repo_id = "DnsSrinath/wan2.1-i2v-14b-480p-Q4_K_S"
-        
-        # Define models in order of size (smallest first)
-        models = [
-            {"dir": "vae", "file": "wan_2.1_vae.safetensors"},
-            {"dir": "clip_vision", "file": "clip_vision_h.safetensors"},
-            {"dir": "text_encoders", "file": "umt5_xxl_fp8_e4m3fn_scaled.safetensors"},
-            {"dir": "diffusion_models", "file": "wan2.1-i2v-14b-480p-Q4_K_S.gguf"}
-        ]
-        
-        print("\n" + "="*80)
-        print("WAN 2.1 MODEL DOWNLOAD")
-        print("="*80)
-        print(f"Total files to download: {len(models)}")
-        print("Files to download:")
-        for i, model in enumerate(models, 1):
-            print(f"{i}. {model['file']} -> {model['dir']}")
-        print("="*80 + "\n")
-        sys.stdout.flush()
-        
-        logger.info(f"Starting download of WAN 2.1 models from {repo_id}")
-        logger.info(f"Total files to download: {len(models)}")
-        
-        # Try to login to Hugging Face (anonymous access)
-        try:
-            logger.info("Attempting to login to Hugging Face (anonymous access)")
-            print("Attempting to login to Hugging Face (anonymous access)...")
-            sys.stdout.flush()
-            login()
-            logger.info("Successfully logged in to Hugging Face")
-            print("Successfully logged in to Hugging Face")
-            sys.stdout.flush()
-        except Exception as e:
-            logger.warning(f"Failed to login to Hugging Face: {e}")
-            logger.warning("Continuing with anonymous access...")
-            print(f"Warning: Failed to login to Hugging Face: {e}")
-            print("Continuing with anonymous access...")
-            sys.stdout.flush()
-        
-        # Download each file one by one
-        success = True
-        for i, model in enumerate(models, 1):
-            dir_name = model["dir"]
-            file_name = model["file"]
-            
-            print(f"\n[{i}/{len(models)}] Downloading {file_name} to {dir_name}...")
-            logger.info(f"Downloading {file_name} to {dir_name}...")
-            sys.stdout.flush()
-            
-            if not await download_model(repo_id, file_name, dir_name):
-                logger.error(f"Failed to download {file_name}")
-                print(f"Failed to download {file_name}")
-                sys.stdout.flush()
-                success = False
-                break
-        
-        # Verify downloads
-        if success:
-            print("\n" + "="*80)
-            print("VERIFYING DOWNLOADS")
-            print("="*80)
-            sys.stdout.flush()
-            
-            for model in models:
-                dir_name = model["dir"]
-                file_name = model["file"]
-                local_path = os.path.join(dir_name, file_name)
-                if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
-                    logger.error(f"Download verification failed for {file_name}")
-                    print(f"❌ {file_name} - VERIFICATION FAILED")
-                    success = False
-                else:
-                    size_mb = os.path.getsize(local_path) / (1024 * 1024)
-                    print(f"✅ {file_name} - {size_mb:.2f} MB")
-                sys.stdout.flush()
-            print("="*80 + "\n")
-        
-        if not success:
-            logger.error("Some downloads failed. Please check the errors above.")
-            print("\n❌ SOME DOWNLOADS FAILED. PLEASE CHECK THE ERRORS ABOVE.")
-            sys.stdout.flush()
+        if not download_with_progress(url, local_path, f"Downloading {file_name}"):
+            print(f"❌ Failed to download {file_name}")
             sys.exit(1)
-        
-        logger.info("\nAll models downloaded successfully!")
-        print("\n✅ ALL MODELS DOWNLOADED SUCCESSFULLY!")
-        sys.stdout.flush()
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in download_models: {e}")
-        print(f"Unexpected error in download_models: {e}")
-        sys.stdout.flush()
-        sys.exit(1)
+    
+    print("\n✅ All downloads completed successfully!")
+    sys.stdout.flush()
 
-# Run the async download function
 if __name__ == "__main__":
     try:
-        logger.info("Starting model download script")
-        print("Starting model download script...")
-        sys.stdout.flush()
-        asyncio.run(download_models())
+        main()
     except Exception as e:
-        logger.error(f"Fatal error in main: {e}")
-        print(f"Fatal error in main: {e}")
-        sys.stdout.flush()
+        print(f"❌ Fatal error: {e}")
         sys.exit(1)
 EOF
     
