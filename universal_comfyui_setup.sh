@@ -1072,6 +1072,30 @@ manage_metadata() {
     esac
 }
 
+# Function to format size in human-readable format
+format_size() {
+    local size="${1:-0}"  # Default to 0 if no argument provided
+    local gb=0
+    local mb=0
+    local kb=0
+    
+    if [ "$size" -gt 0 ]; then
+        gb=$((size / 1073741824))
+        mb=$((size / 1048576))
+        kb=$((size / 1024))
+        
+        if [ "$gb" -gt 0 ]; then
+            echo "$gb GB"
+        elif [ "$mb" -gt 0 ]; then
+            echo "$mb MB"
+        else
+            echo "$kb KB"
+        fi
+    else
+        echo "0 KB"
+    fi
+}
+
 # Function to download a model with metadata tracking
 download_model() {
     # Initialize all variables at the beginning
@@ -1080,6 +1104,9 @@ download_model() {
     local expected_size="$3"
     local model_name=""
     local temp_file=""
+    local actual_size="0"
+    local downloaded_size="0"
+    local size_diff="0"
     
     # Validate parameters first
     if [ -z "$url" ] || [ -z "$output_path" ]; then
@@ -1099,20 +1126,20 @@ download_model() {
     
     # Check if file exists and is valid according to metadata
     if manage_metadata "check" "$output_path" "$expected_size"; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ $model_name exists and is valid, skipping download"
+        log "✅ $model_name exists and is valid, skipping download" "$GREEN"
         return 0
     fi
     
     # If file exists but metadata doesn't match, verify it
     if [ -f "$output_path" ]; then
-        local actual_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null || echo "0")
+        actual_size=$(stat -f %z "$output_path" 2>/dev/null || stat -c %s "$output_path" 2>/dev/null || echo "0")
         if [ "$actual_size" = "$expected_size" ]; then
             # File size matches, update metadata
             manage_metadata "update" "$output_path" "$expected_size"
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ $model_name exists with correct size, updating metadata"
+            log "✅ $model_name exists with correct size ($(format_size "$actual_size")), updating metadata" "$GREEN"
             return 0
         else
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️ $model_name exists but size mismatch ($actual_size vs $expected_size), re-downloading"
+            log "⚠️ $model_name exists but size mismatch ($(format_size "$actual_size") vs $(format_size "$expected_size")), re-downloading" "$YELLOW" "WARNING"
             rm -f "$output_path" || {
                 log "Failed to remove existing file $output_path" "$RED" "ERROR"
                 return 1
@@ -1120,11 +1147,11 @@ download_model() {
         fi
     fi
     
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Downloading $model_name..."
+    log "Downloading $model_name..." "$BLUE"
     if wget --no-check-certificate --progress=bar:force:noscroll "$url" -O "$temp_file"; then
-        local downloaded_size=$(stat -f %z "$temp_file" 2>/dev/null || stat -c %s "$temp_file" 2>/dev/null || echo "0")
+        downloaded_size=$(stat -f %z "$temp_file" 2>/dev/null || stat -c %s "$temp_file" 2>/dev/null || echo "0")
         # Allow for small size differences (up to 1MB) due to filesystem differences
-        local size_diff=$((downloaded_size - expected_size))
+        size_diff=$((downloaded_size - expected_size))
         if [ ${size_diff#-} -le 1048576 ] || [ "$downloaded_size" = "$expected_size" ]; then
             mv "$temp_file" "$output_path" || {
                 log "Failed to move downloaded file to final location" "$RED" "ERROR"
@@ -1132,17 +1159,17 @@ download_model() {
                 return 1
             }
             manage_metadata "update" "$output_path" "$downloaded_size"
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Successfully downloaded $model_name ($downloaded_size bytes)"
+            log "✅ Successfully downloaded $model_name ($(format_size "$downloaded_size"))" "$GREEN"
             return 0
         else
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Downloaded file size mismatch for $model_name ($downloaded_size vs $expected_size bytes)"
+            log "❌ Downloaded file size mismatch for $model_name ($(format_size "$downloaded_size") vs $(format_size "$expected_size"))" "$RED" "ERROR"
             rm -f "$temp_file" || {
                 log "Failed to remove invalid file $temp_file" "$RED" "ERROR"
             }
             return 1
         fi
     else
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ Failed to download $model_name"
+        log "❌ Failed to download $model_name" "$RED" "ERROR"
         rm -f "$temp_file" || {
             log "Failed to remove temporary file $temp_file" "$RED" "ERROR"
         }
@@ -1344,22 +1371,6 @@ main() {
     log "Downloading WAN 2.1 models (several GB in size)..." "$YELLOW" "WARNING"
     log "Estimated download time: 10-30 minutes depending on network speed" "$YELLOW" "WARNING"
     log "Using official Comfy-Org repository: Comfy-Org/Wan_2.1_ComfyUI_repackaged" "$GREEN"
-    
-    # Function to format size using simple integer division
-    format_size() {
-        local size=$1
-        local gb=$((size / 1073741824))
-        local mb=$((size / 1048576))
-        local kb=$((size / 1024))
-        
-        if [ $gb -gt 0 ]; then
-            printf "%d GB" $gb
-        elif [ $mb -gt 0 ]; then
-            printf "%d MB" $mb
-        else
-            printf "%d KB" $kb
-        fi
-    }
     
     # Download WAN 2.1 models with metadata tracking
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Initializing metadata system..."
