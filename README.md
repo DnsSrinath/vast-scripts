@@ -45,6 +45,9 @@ The startup script automatically installs the following plugins (if not already 
 If the automatic startup fails, you can manually run the startup script from GitHub:
 
 ```bash
+# Change to the workspace directory
+cd /workspace
+
 # Clone the repository
 git clone https://github.com/DnsSrinath/vast-scripts.git
 
