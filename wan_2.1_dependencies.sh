@@ -1,99 +1,108 @@
 #!/bin/bash
 
-# WAN 2.1 Dependencies Download Script
-# This script downloads the required models for WAN 2.1 video generation in ComfyUI
+# WAN 2.1 Dependencies Download + ComfyUI Auto Start Script (port 8188)
+# Author: DnsSrinath (Enhanced by ChatGPT)
 
-echo "=== Starting WAN 2.1 Dependencies Download ==="
-echo "This script will download the required models for WAN 2.1 video generation"
-echo "Using Comfy-Org repackaged models (no authentication required)"
+echo "=== WAN 2.1 Setup: Start ==="
 
-# Create directories if they don't exist, or clean them if they do
-echo "Setting up model directories..."
+# Workspace and ComfyUI paths
+COMFY_PATH="/opt/workspace-internal/ComfyUI"
+BASE_PATH="$COMFY_PATH/models"
 
-# Function to create or clean directory
+# Create model subdirectories
 setup_directory() {
-    local dir=$1
-    if [ -d "$dir" ]; then
-        echo "Directory $dir already exists. Cleaning contents..."
-        rm -f "$dir"/*
-    else
-        echo "Creating directory $dir..."
+    local dir="$1"
+    if [ ! -d "$dir" ]; then
+        echo "Creating: $dir"
         mkdir -p "$dir"
     fi
 }
 
-# Setup all required directories
-setup_directory "/opt/workspace-internal/ComfyUI/models/text_encoders"
-setup_directory "/opt/workspace-internal/ComfyUI/models/clip_vision"
-setup_directory "/opt/workspace-internal/ComfyUI/models/vae"
-setup_directory "/opt/workspace-internal/ComfyUI/models/diffusion_models"
+setup_directory "$BASE_PATH/text_encoders"
+setup_directory "$BASE_PATH/clip_vision"
+setup_directory "$BASE_PATH/vae"
+setup_directory "$BASE_PATH/diffusion_models"
 
-# Download VAE
-echo "Downloading VAE model..."
-wget -O /opt/workspace-internal/ComfyUI/models/vae/wan_2.1_vae.safetensors https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors
-if [ $? -eq 0 ]; then
-    echo "✓ VAE model downloaded successfully"
-else
-    echo "✗ Failed to download VAE model"
-    exit 1
-fi
+# Safe download function
+download_model() {
+    local url="$1"
+    local dest="$2"
+    local name=$(basename "$dest")
+    if [ -f "$dest" ]; then
+        echo "✓ $name already exists."
+    else
+        echo "↓ Downloading $name..."
+        wget -q --show-progress -O "$dest" "$url"
+        if [ $? -eq 0 ]; then
+            echo "✓ $name downloaded."
+        else
+            echo "✗ Failed to download $name"
+            exit 1
+        fi
+    fi
+}
 
-# Download CLIP Vision
-echo "Downloading CLIP Vision model..."
-wget -O /opt/workspace-internal/ComfyUI/models/clip_vision/clip_vision_h.safetensors https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors
-if [ $? -eq 0 ]; then
-    echo "✓ CLIP Vision model downloaded successfully"
-else
-    echo "✗ Failed to download CLIP Vision model"
-    exit 1
-fi
+# Core model downloads
+download_model \
+"https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors" \
+"$BASE_PATH/vae/wan_2.1_vae.safetensors"
 
-# Download Text Encoder
-echo "Downloading Text Encoder model..."
-wget -O /opt/workspace-internal/ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
-if [ $? -eq 0 ]; then
-    echo "✓ Text Encoder model downloaded successfully"
-else
-    echo "✗ Failed to download Text Encoder model"
-    exit 1
-fi
+download_model \
+"https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors" \
+"$BASE_PATH/clip_vision/clip_vision_h.safetensors"
 
-# Download Diffusion Model (1.3B version)
-echo "Downloading Diffusion Model (1.3B version)..."
-wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors
-if [ $? -eq 0 ]; then
-    echo "✓ Diffusion Model downloaded successfully"
-else
-    echo "✗ Failed to download Diffusion Model"
-    exit 1
-fi
+download_model \
+"https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors" \
+"$BASE_PATH/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
 
-echo "=== WAN 2.1 Dependencies Download Complete ==="
-echo "All required models have been downloaded successfully"
-echo "You can now use WAN 2.1 in ComfyUI"
+download_model \
+"https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors" \
+"$BASE_PATH/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors"
 
-# Optional: Download additional models
+# Optional models
 echo ""
-echo "Would you like to download additional WAN 2.1 models? (y/n)"
-read -r response
+read -rp "Download additional 14B video models? (y/n): " response
 if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
-    echo "Downloading Image-to-video 14B 480P model..."
-    wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_i2v_14B_480P_fp16.safetensors https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_14B_480P_fp16.safetensors
-    
-    echo "Downloading Image-to-video 14B 720P model..."
-    wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_i2v_14B_720P_fp16.safetensors https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_14B_720P_fp16.safetensors
-    
-    echo "Downloading Text-to-video 14B model..."
-    wget -O /opt/workspace-internal/ComfyUI/models/diffusion_models/wan2.1_t2v_14B_fp16.safetensors https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_14B_fp16.safetensors
-    
-    echo "✓ Additional models downloaded successfully"
+    download_model \
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_14B_480P_fp16.safetensors" \
+    "$BASE_PATH/diffusion_models/wan2.1_i2v_14B_480P_fp16.safetensors"
+
+    download_model \
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_14B_720P_fp16.safetensors" \
+    "$BASE_PATH/diffusion_models/wan2.1_i2v_14B_720P_fp16.safetensors"
+
+    download_model \
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_14B_fp16.safetensors" \
+    "$BASE_PATH/diffusion_models/wan2.1_t2v_14B_fp16.safetensors"
 fi
 
 echo ""
-echo "To use WAN 2.1 in ComfyUI, make sure you have installed the ComfyUI-WAN plugin."
-echo "You can install it using ComfyUI Manager or by following the instructions in the README."
+echo "✓ WAN 2.1 Model Setup Complete"
+
+# Auto-launch ComfyUI on port 8188
 echo ""
-echo "After installing the plugin and downloading the models, restart ComfyUI:"
-echo "pkill -f \"python3.*main.py.*--port 8188\""
-echo "cd /workspace"
-echo "./vast-scripts/vast-scripts/vast_startup.sh" 
+echo "🚀 Starting ComfyUI on port 8188..."
+cd "$COMFY_PATH"
+
+pkill -f "python3.*main.py" >/dev/null 2>&1
+
+nohup python3 main.py --listen 0.0.0.0 --port 8188 --enable-cors-header > "$COMFY_PATH/comfyui.log" 2>&1 &
+
+sleep 2
+echo "✓ ComfyUI started in background (port 8188). Log: $COMFY_PATH/comfyui.log"
+
+
+# Auto-start ComfyUI in background on port 8188
+echo ""
+echo "🚀 Launching ComfyUI on port 8188..."
+cd /opt/workspace-internal/ComfyUI
+
+# Kill any previously running instance
+pkill -f "python3.*main.py" >/dev/null 2>&1
+
+# Start ComfyUI as background service
+nohup python3 main.py --listen 0.0.0.0 --port 8188 --enable-cors-header > comfyui.log 2>&1 &
+
+sleep 2
+echo "✓ ComfyUI started in background. Access it at: http://localhost:8188"
+echo "Log file: /opt/workspace-internal/ComfyUI/comfyui.log"
