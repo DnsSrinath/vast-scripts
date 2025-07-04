@@ -61,19 +61,45 @@ check_environment() {
     log "Environment check passed ✓"
 }
 
+# Install Hugging Face CLI and dependencies
+install_huggingface_cli() {
+    log "Installing Hugging Face CLI and dependencies..."
+    
+    # Always install/upgrade huggingface_hub with CLI support
+    pip install --upgrade "huggingface_hub[cli]"
+    
+    # Verify installation
+    if command -v huggingface-cli &> /dev/null; then
+        log "Hugging Face CLI installed successfully ✓"
+        info "HF CLI Version: $(huggingface-cli --version)"
+    else
+        error "Failed to install Hugging Face CLI"
+        exit 1
+    fi
+}
+
 # Activate virtual environment and setup HF
 activate_venv() {
     log "Activating main virtual environment..."
     source /venv/main/bin/activate
     
-    # Install/upgrade huggingface_hub if HF_TOKEN is provided
+    # Install HF CLI first
+    install_huggingface_cli
+    
+    # Setup authentication if token is provided
     if [ -n "$HF_TOKEN" ]; then
         log "Setting up Hugging Face authentication..."
-        pip install --upgrade huggingface_hub
         
         # Login to Hugging Face
         echo "$HF_TOKEN" | huggingface-cli login --token
-        log "Hugging Face authentication configured ✓"
+        
+        # Verify login
+        if huggingface-cli whoami &>/dev/null; then
+            log "Hugging Face authentication configured ✓"
+            info "Logged in as: $(huggingface-cli whoami)"
+        else
+            warn "HF authentication failed, will fallback to anonymous downloads"
+        fi
     else
         warn "No HF_TOKEN provided. Downloads will be anonymous (may be slower)."
         info "To use HF authentication, set HF_TOKEN environment variable."
@@ -126,19 +152,33 @@ download_with_hf() {
     local output_file="$2"
     local description="$3"
     
-    if [ -n "$HF_TOKEN" ]; then
-        # Use huggingface-cli for authenticated downloads
-        local repo_path=$(echo "$url" | sed 's|https://huggingface.co/||' | sed 's|/resolve/main/| |' | awk '{print $1}')
+    # Extract repo and file info from HF URL
+    if [[ "$url" =~ huggingface\.co ]]; then
+        local repo_path=$(echo "$url" | sed 's|https://huggingface.co/||' | sed 's|/resolve/main/.*||')
         local file_path=$(echo "$url" | sed 's|.*/resolve/main/||')
         
-        info "Downloading $description using HF authentication..."
-        huggingface-cli download "$repo_path" "$file_path" --local-dir-use-symlinks False --local-dir "$(dirname "$output_file")" || {
-            warn "HF download failed, falling back to wget..."
-            wget -O "$output_file" "$url"
-        }
+        # Try HF CLI download first (faster and more reliable)
+        if command -v huggingface-cli &> /dev/null; then
+            info "Downloading $description using Hugging Face CLI..."
+            
+            if huggingface-cli download "$repo_path" "$file_path" \
+                --local-dir "$(dirname "$output_file")" \
+                --local-dir-use-symlinks False \
+                --filename "$(basename "$output_file")" 2>/dev/null; then
+                log "HF CLI download successful ✓"
+                return 0
+            else
+                warn "HF CLI download failed, falling back to wget..."
+            fi
+        fi
+    fi
+    
+    # Fallback to wget for all cases
+    info "Downloading $description using wget..."
+    if [ -n "$HF_TOKEN" ] && [[ "$url" =~ huggingface\.co ]]; then
+        # Add authorization header for HF downloads
+        wget --header="Authorization: Bearer $HF_TOKEN" -O "$output_file" "$url"
     else
-        # Fallback to wget for anonymous downloads
-        info "Downloading $description using wget..."
         wget -O "$output_file" "$url"
     fi
 }
@@ -213,7 +253,23 @@ download_example_workflow() {
     log "Example workflow downloaded ✓"
 }
 
-# Install additional useful nodes
+# Install additional useful packages
+install_additional_packages() {
+    log "Installing additional useful packages..."
+    
+    # Install essential packages for video processing and model handling
+    pip install --upgrade \
+        opencv-python \
+        pillow \
+        imageio \
+        imageio-ffmpeg \
+        accelerate \
+        transformers \
+        safetensors \
+        tqdm
+    
+    log "Additional packages installed ✓"
+}
 install_additional_nodes() {
     log "Installing additional useful nodes..."
     
@@ -249,16 +305,19 @@ create_info_file() {
 
 Setup Date: $(date)
 Quantization: ${QUANTIZATION}
-Script Version: 1.1
+Script Version: 1.2
 HF Authentication: $([ -n "$HF_TOKEN" ] && echo "Enabled" || echo "Disabled")
+HF CLI Installed: $(command -v huggingface-cli &>/dev/null && echo "Yes" || echo "No")
 
 Installed Components:
+- Hugging Face CLI with authentication
 - ComfyUI-GGUF custom node
 - ComfyUI-WanVideo custom nodes
 - Wan2.1 VACE ${QUANTIZATION} model
 - Wan2.1 VAE (bf16)
 - T5 text encoder (fp16)
 - Example VACE workflow
+- Additional Python packages for video processing
 
 Model Locations:
 - VACE Model: /workspace/ComfyUI/models/unet/wan2_1_14b_vace-${QUANTIZATION}.gguf
@@ -326,6 +385,7 @@ main() {
     download_vae
     download_text_encoder
     download_example_workflow
+    install_additional_packages
     install_additional_nodes
     create_info_file
     restart_comfyui
