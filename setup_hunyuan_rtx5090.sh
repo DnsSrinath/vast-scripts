@@ -118,7 +118,12 @@ apt update
 log "Installing OpenGL packages: $OPENGL_PACKAGES"
 log "Installing GLib package: $GLIB_PACKAGE"
 
-apt install -y \
+# Fix the dependency issue manually
+apt update && apt install -y \
+    libopengl0 \
+    libglx0 \
+    libgl1-mesa-dri \
+    mesa-utils \
     python3 \
     python3-pip \
     python3-venv \
@@ -129,8 +134,7 @@ apt install -y \
     ffmpeg \
     build-essential \
     cmake \
-    $OPENGL_PACKAGES \
-    $GLIB_PACKAGE \
+    libglib2.0-0t64 \
     libsm6 \
     libxext6 \
     libxrender-dev \
@@ -138,10 +142,7 @@ apt install -y \
     libfontconfig1 \
     unzip \
     htop \
-    tree \
-    ca-certificates \
-    gnupg \
-    lsb-release
+    tree
 
 success "✅ System dependencies installed successfully"
 
