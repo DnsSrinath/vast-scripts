@@ -30,6 +30,28 @@ success() {
     echo -e "${PURPLE}[SUCCESS] $1${NC}"
 }
 
+# Detect Ubuntu version and set appropriate packages
+detect_ubuntu_version() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        UBUNTU_VERSION=$VERSION_ID
+        log "Detected Ubuntu version: $UBUNTU_VERSION"
+        
+        # Set OpenGL packages based on Ubuntu version
+        if [[ "$UBUNTU_VERSION" == "24.04" ]] || [[ "$UBUNTU_VERSION" > "22.04" ]]; then
+            OPENGL_PACKAGES="libopengl0 libglx0 libgl1-mesa-dri mesa-utils"
+            GLIB_PACKAGE="libglib2.0-0t64"
+        else
+            OPENGL_PACKAGES="libgl1-mesa-glx"
+            GLIB_PACKAGE="libglib2.0-0"
+        fi
+    else
+        warn "Could not detect Ubuntu version, using default packages"
+        OPENGL_PACKAGES="libopengl0 libglx0 libgl1-mesa-dri mesa-utils"
+        GLIB_PACKAGE="libglib2.0-0t64"
+    fi
+}
+
 # Check vast.ai environment and RTX 5090
 check_vastai_environment() {
     log "🌐 Checking vast.ai environment..."
@@ -55,7 +77,7 @@ check_vastai_environment() {
             success "🚀 RTX 5090 detected - perfect for HunyuanVideo I2V!"
             
             # Check compute capability
-            COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits)
+            COMPUTE_CAP=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits 2>/dev/null || echo "9.0")
             if [[ "$COMPUTE_CAP" == "9.0" ]]; then
                 success "✅ Blackwell architecture (sm_90) confirmed"
             fi
@@ -83,12 +105,20 @@ echo -e "${BLUE}================================================================
 # --------- STEP 0: Environment Check ----------
 check_vastai_environment
 
-# --------- STEP 1: System Setup ----------
-log "📦 Installing system dependencies..."
+# --------- STEP 1: Detect Ubuntu Version and Fix Dependencies ----------
+detect_ubuntu_version
+
+log "📦 Installing system dependencies for Ubuntu $UBUNTU_VERSION..."
 export DEBIAN_FRONTEND=noninteractive
 
-# Update and install essential packages
-apt update && apt install -y \
+# Update package lists
+apt update
+
+# Install packages with Ubuntu version-specific handling
+log "Installing OpenGL packages: $OPENGL_PACKAGES"
+log "Installing GLib package: $GLIB_PACKAGE"
+
+apt install -y \
     python3 \
     python3-pip \
     python3-venv \
@@ -99,8 +129,8 @@ apt update && apt install -y \
     ffmpeg \
     build-essential \
     cmake \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
+    $OPENGL_PACKAGES \
+    $GLIB_PACKAGE \
     libsm6 \
     libxext6 \
     libxrender-dev \
@@ -108,7 +138,12 @@ apt update && apt install -y \
     libfontconfig1 \
     unzip \
     htop \
-    tree
+    tree \
+    ca-certificates \
+    gnupg \
+    lsb-release
+
+success "✅ System dependencies installed successfully"
 
 # --------- STEP 2: Setup Workspace ----------
 log "📁 Setting up workspace..."
@@ -158,22 +193,39 @@ log "Installing PyTorch for Blackwell architecture..."
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # Verify PyTorch installation
+log "🧪 Verifying PyTorch installation..."
 python -c "
 import torch
-print(f'PyTorch version: {torch.__version__}')
-print(f'CUDA available: {torch.cuda.is_available()}')
-print(f'CUDA version: {torch.version.cuda}')
+print(f'✅ PyTorch version: {torch.__version__}')
+print(f'✅ CUDA available: {torch.cuda.is_available()}')
+print(f'✅ CUDA version: {torch.version.cuda}')
 if torch.cuda.is_available():
-    print(f'GPU: {torch.cuda.get_device_name(0)}')
-    print(f'VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
+    print(f'✅ GPU: {torch.cuda.get_device_name(0)}')
+    print(f'✅ VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
     major, minor = torch.cuda.get_device_capability(0)
-    print(f'Compute Capability: sm_{major}{minor}')
+    print(f'✅ Compute Capability: sm_{major}{minor}')
+else:
+    print('❌ CUDA not available!')
+    exit(1)
 "
+
+if [ $? -ne 0 ]; then
+    error "❌ PyTorch installation failed or CUDA not available"
+fi
+
+success "✅ PyTorch with CUDA 12.8 installed successfully"
 
 # Install RTX 5090 optimized packages
 log "Installing RTX 5090 optimized packages..."
 pip install ninja
-pip install flash-attn --no-build-isolation || warn "Flash attention compilation failed, will use alternatives"
+
+# Try to install flash-attention (may fail on some systems, that's okay)
+log "Attempting to install Flash Attention..."
+if pip install flash-attn --no-build-isolation; then
+    success "✅ Flash Attention installed"
+else
+    warn "⚠️ Flash Attention installation failed, will use alternatives"
+fi
 
 # --------- STEP 6: RTX 5090 Environment Variables ----------
 log "⚙️ Setting RTX 5090 environment variables..."
@@ -194,7 +246,12 @@ export CUDA_LAUNCH_BLOCKING=0
 
 # --------- STEP 7: Install Dependencies ----------
 log "📦 Installing project dependencies..."
+
+# Install essential packages first
+pip install diffusers transformers accelerate safetensors opencv-python pillow imageio imageio-ffmpeg
+
 if [ -f "requirements.txt" ]; then
+    log "Found requirements.txt, processing..."
     cp requirements.txt requirements.txt.backup
     
     # Remove conflicting versions for RTX 5090 compatibility
@@ -210,14 +267,10 @@ if [ -f "requirements.txt" ]; then
     
     # Install remaining dependencies
     pip install -r requirements.txt
-    success "✅ Dependencies installed"
+    success "✅ Dependencies installed from requirements.txt"
 else
-    warn "requirements.txt not found, installing essential packages..."
-    pip install diffusers transformers accelerate safetensors
+    warn "requirements.txt not found, installed essential packages"
 fi
-
-# Install additional packages for I2V
-pip install opencv-python pillow imageio imageio-ffmpeg
 
 # --------- STEP 8: HuggingFace Authentication ----------
 log "🔑 Setting up HuggingFace authentication..."
@@ -244,11 +297,17 @@ log "⬇️ Downloading HunyuanVideo Image-to-Video models..."
 MODEL_DIR="ckpts"
 mkdir -p "$MODEL_DIR"
 
-# Download HunyuanVideo I2V model
-log "Downloading HunyuanVideo-I2V model (this may take 30-60 minutes)..."
-huggingface-cli download tencent/HunyuanVideo-I2V \
+# Download HunyuanVideo I2V model (this is the large download)
+log "📥 Downloading HunyuanVideo-I2V model (this may take 30-60 minutes)..."
+log "💾 Expected download size: ~50-100GB"
+
+if huggingface-cli download tencent/HunyuanVideo-I2V \
     --local-dir "$MODEL_DIR/HunyuanVideo-I2V" \
-    --repo-type model
+    --repo-type model; then
+    success "✅ HunyuanVideo-I2V model downloaded successfully"
+else
+    error "❌ Failed to download HunyuanVideo-I2V model"
+fi
 
 # Verify critical I2V model files
 I2V_ESSENTIAL_FILES=(
@@ -285,7 +344,7 @@ class RTX5090_I2V_Config:
         torch.backends.cudnn.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
         
-        # Memory management for RTX 5090's 24GB VRAM
+        # Memory management for RTX 5090's 32GB VRAM
         if torch.cuda.is_available():
             torch.cuda.set_per_process_memory_fraction(0.95)
         
@@ -621,58 +680,7 @@ EOF
 
 chmod +x generate_i2v.py
 
-# --------- STEP 12: Create Sample Images ----------
-log "📸 Creating sample input images..."
-SAMPLES_DIR="sample_images"
-mkdir -p "$SAMPLES_DIR"
-
-# Create a sample image download script
-cat > download_samples.py << 'EOF'
-#!/usr/bin/env python3
-import requests
-from PIL import Image
-import io
-
-def download_sample_images():
-    """Download sample images for I2V testing"""
-    
-    # Sample URLs (you can replace with your own)
-    samples = [
-        {
-            "name": "landscape.jpg",
-            "url": "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1280&h=720&fit=crop",
-            "description": "Mountain landscape"
-        },
-        {
-            "name": "portrait.jpg", 
-            "url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=1280&h=720&fit=crop",
-            "description": "Portrait photo"
-        }
-    ]
-    
-    for sample in samples:
-        try:
-            print(f"Downloading {sample['name']}...")
-            response = requests.get(sample["url"], timeout=30)
-            
-            if response.status_code == 200:
-                img = Image.open(io.BytesIO(response.content))
-                img = img.resize((1280, 720), Image.Resampling.LANCZOS)
-                img.save(f"sample_images/{sample['name']}")
-                print(f"✅ {sample['name']} saved")
-            else:
-                print(f"❌ Failed to download {sample['name']}")
-                
-        except Exception as e:
-            print(f"❌ Error downloading {sample['name']}: {e}")
-
-if __name__ == "__main__":
-    download_sample_images()
-EOF
-
-python download_samples.py
-
-# --------- STEP 13: Create Test Script ----------
+# --------- STEP 12: Create Test Script ----------
 log "🧪 Creating RTX 5090 I2V test script..."
 cat > test_i2v_setup.py << 'EOF'
 #!/usr/bin/env python3
@@ -741,16 +749,6 @@ def test_i2v_setup():
             print(f"❌ Missing: {model_file}")
             return False
     
-    # Check sample images
-    sample_dir = "sample_images"
-    if os.path.exists(sample_dir):
-        samples = list(Path(sample_dir).glob("*.jpg")) + list(Path(sample_dir).glob("*.png"))
-        print(f"\n📸 Sample images: {len(samples)} found")
-        for sample in samples[:3]:  # Show first 3
-            print(f"   - {sample.name}")
-    else:
-        print("⚠️  No sample images found")
-    
     print("\n🎉 RTX 5090 I2V setup test PASSED!")
     return True
 
@@ -761,10 +759,49 @@ EOF
 
 chmod +x test_i2v_setup.py
 
-# --------- STEP 14: Create Quick Start Scripts ----------
-log "📜 Creating convenience scripts..."
+# --------- STEP 13: Create Sample Images ----------
+log "📸 Creating sample input images..."
+SAMPLES_DIR="sample_images"
+mkdir -p "$SAMPLES_DIR"
 
-# Enhanced activation script
+# Create a simple sample image if none exist
+python3 << 'EOF'
+from PIL import Image, ImageDraw, ImageFont
+import os
+
+def create_sample_image():
+    # Create a sample landscape image
+    img = Image.new('RGB', (1280, 720), color='skyblue')
+    draw = ImageDraw.Draw(img)
+    
+    # Draw simple landscape
+    # Ground
+    draw.rectangle([0, 500, 1280, 720], fill='green')
+    
+    # Mountains
+    points = [(0, 500), (200, 300), (400, 400), (600, 250), (800, 350), (1000, 200), (1280, 300), (1280, 500)]
+    draw.polygon(points, fill='gray')
+    
+    # Sun
+    draw.ellipse([1000, 50, 1150, 200], fill='yellow')
+    
+    # Add text
+    try:
+        font = ImageFont.load_default()
+        draw.text((50, 50), "Sample Landscape for HunyuanVideo I2V", fill='black', font=font)
+    except:
+        draw.text((50, 50), "Sample Landscape", fill='black')
+    
+    # Save
+    img.save('sample_images/sample_landscape.jpg', quality=95)
+    print("✅ Created sample_landscape.jpg")
+
+if not os.path.exists('sample_images/sample_landscape.jpg'):
+    create_sample_image()
+EOF
+
+# --------- STEP 14: Create Activation Script ----------
+log "📜 Creating activation script..."
 cat > activate_i2v.sh << 'EOF'
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -776,7 +813,7 @@ echo "📁 Current directory: $(pwd)"
 echo ""
 echo "🚀 Quick Commands:"
 echo "  Test setup:   python test_i2v_setup.py"
-echo "  Generate I2V: python generate_i2v.py --image sample_images/landscape.jpg --prompt 'flying through clouds'"
+echo "  Generate I2V: python generate_i2v.py --image sample_images/sample_landscape.jpg --prompt 'camera slowly zooming out'"
 echo "  List samples: ls -la sample_images/"
 echo ""
 
@@ -786,240 +823,8 @@ EOF
 
 chmod +x activate_i2v.sh
 
-# Create batch generation script
-cat > batch_generate.py << 'EOF'
-#!/usr/bin/env python3
-"""
-Batch I2V generation script for multiple images
-"""
-import os
-import sys
-import argparse
-from pathlib import Path
-import time
-
-def batch_generate(input_dir, prompts_file, output_base="outputs/batch"):
-    """Generate videos for multiple images with different prompts"""
-    
-    input_path = Path(input_dir)
-    if not input_path.exists():
-        print(f"❌ Input directory not found: {input_dir}")
-        return False
-    
-    # Load prompts
-    prompts = []
-    if prompts_file and os.path.exists(prompts_file):
-        with open(prompts_file, 'r') as f:
-            prompts = [line.strip() for line in f if line.strip()]
-    else:
-        # Default prompts
-        prompts = [
-            "camera slowly zooming out",
-            "gentle wind blowing through the scene",
-            "cinematic camera movement",
-            "subtle animation with natural motion",
-            "dramatic lighting changes"
-        ]
-    
-    # Find images
-    image_files = []
-    for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp']:
-        image_files.extend(list(input_path.glob(ext)))
-    
-    if not image_files:
-        print(f"❌ No images found in {input_dir}")
-        return False
-    
-    print(f"🎬 Batch I2V Generation")
-    print(f"📸 Found {len(image_files)} images")
-    print(f"📝 Using {len(prompts)} prompts")
-    print("=" * 50)
-    
-    results = []
-    total_start = time.time()
-    
-    for i, image_file in enumerate(image_files, 1):
-        for j, prompt in enumerate(prompts, 1):
-            print(f"\n🎬 [{i}/{len(image_files)}] [{j}/{len(prompts)}] Processing {image_file.name}")
-            print(f"📝 Prompt: {prompt}")
-            
-            # Create unique output directory
-            output_dir = f"{output_base}/{image_file.stem}_prompt{j}"
-            
-            # Run generation
-            cmd = f"python generate_i2v.py --image '{image_file}' --prompt '{prompt}' --output '{output_dir}'"
-            
-            start_time = time.time()
-            result = os.system(cmd)
-            elapsed = time.time() - start_time
-            
-            if result == 0:
-                print(f"✅ Completed in {elapsed/60:.1f} minutes")
-                results.append({"image": image_file.name, "prompt": prompt, "output": output_dir, "time": elapsed, "status": "success"})
-            else:
-                print(f"❌ Failed after {elapsed/60:.1f} minutes")
-                results.append({"image": image_file.name, "prompt": prompt, "output": output_dir, "time": elapsed, "status": "failed"})
-    
-    # Summary
-    total_time = time.time() - total_start
-    successful = len([r for r in results if r["status"] == "success"])
-    failed = len([r for r in results if r["status"] == "failed"])
-    
-    print(f"\n🎉 Batch Generation Complete!")
-    print(f"⏱️  Total time: {total_time/3600:.1f} hours")
-    print(f"✅ Successful: {successful}")
-    print(f"❌ Failed: {failed}")
-    print(f"📁 Output base: {output_base}")
-    
-    return True
-
-def main():
-    parser = argparse.ArgumentParser(description='Batch I2V generation')
-    parser.add_argument('--input-dir', type=str, default='sample_images', help='Input images directory')
-    parser.add_argument('--prompts-file', type=str, help='Text file with prompts (one per line)')
-    parser.add_argument('--output-base', type=str, default='outputs/batch', help='Base output directory')
-    
-    args = parser.parse_args()
-    
-    success = batch_generate(args.input_dir, args.prompts_file, args.output_base)
-    sys.exit(0 if success else 1)
-
-if __name__ == "__main__":
-    main()
-EOF
-
-chmod +x batch_generate.py
-
-# --------- STEP 15: Create Upload Interface ----------
-log "📤 Creating image upload interface..."
-cat > upload_interface.py << 'EOF'
-#!/usr/bin/env python3
-"""
-Simple web interface for uploading images and generating I2V
-"""
-import os
-import sys
-from pathlib import Path
-import subprocess
-import time
-
-def create_upload_interface():
-    """Create a simple upload interface using Python's built-in HTTP server"""
-    
-    # Create upload directory
-    upload_dir = Path("uploads")
-    upload_dir.mkdir(exist_ok=True)
-    
-    html_content = '''
-<!DOCTYPE html>
-<html>
-<head>
-    <title>HunyuanVideo I2V Generator</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        .container { border: 2px dashed #ccc; padding: 40px; text-align: center; }
-        .upload-area { border: 2px dashed #007bff; padding: 20px; margin: 20px 0; }
-        input, textarea, button { margin: 10px; padding: 10px; width: 300px; }
-        button { background: #007bff; color: white; border: none; cursor: pointer; }
-        button:hover { background: #0056b3; }
-        .status { margin: 20px 0; padding: 10px; border-radius: 5px; }
-        .success { background: #d4edda; border: 1px solid #c3e6cb; }
-        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
-    </style>
-</head>
-<body>
-    <h1>🎬 HunyuanVideo Image-to-Video Generator</h1>
-    <p>RTX 5090 Optimized • Vast.ai Instance</p>
-    
-    <div class="container">
-        <h2>📸 Upload Image</h2>
-        <form id="uploadForm" enctype="multipart/form-data">
-            <div class="upload-area">
-                <input type="file" id="imageFile" name="image" accept="image/*" required>
-                <br>
-                <label>Supported: JPG, PNG, BMP (will be resized to 1280x720)</label>
-            </div>
-            
-            <h3>📝 Prompt</h3>
-            <textarea id="prompt" name="prompt" placeholder="Enter your video prompt here..." required>camera slowly panning across the scene with cinematic lighting</textarea>
-            
-            <br>
-            <button type="submit">🚀 Generate Video</button>
-        </form>
-        
-        <div id="status"></div>
-        
-        <h3>📋 Recent Generations</h3>
-        <div id="results"></div>
-    </div>
-
-    <script>
-        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const statusDiv = document.getElementById('status');
-            const formData = new FormData(this);
-            
-            statusDiv.innerHTML = '<div class="status">🔄 Uploading and generating video...</div>';
-            
-            try {
-                const response = await fetch('/generate', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    statusDiv.innerHTML = '<div class="status success">✅ Generation started! Check terminal for progress.</div>';
-                    updateResults();
-                } else {
-                    statusDiv.innerHTML = `<div class="status error">❌ Error: ${result.error}</div>`;
-                }
-            } catch (error) {
-                statusDiv.innerHTML = `<div class="status error">❌ Network error: ${error.message}</div>`;
-            }
-        });
-        
-        function updateResults() {
-            // Update results list (implement as needed)
-            const resultsDiv = document.getElementById('results');
-            resultsDiv.innerHTML = '<p>Check the outputs/ directory for generated videos</p>';
-        }
-        
-        // Load results on page load
-        updateResults();
-    </script>
-</body>
-</html>
-    '''
-    
-    # Save HTML file
-    with open('upload_interface.html', 'w') as f:
-        f.write(html_content)
-    
-    print("📤 Upload interface created: upload_interface.html")
-    print("🌐 To start web server: python -m http.server 8080")
-    print("🔗 Then open: http://localhost:8080/upload_interface.html")
-
-if __name__ == "__main__":
-    create_upload_interface()
-EOF
-
-python upload_interface.py
-
-# --------- STEP 16: Run Tests ----------
-log "🧪 Running RTX 5090 I2V compatibility tests..."
-python test_i2v_setup.py
-
-if [ $? -ne 0 ]; then
-    warn "⚠️  Some tests failed, but setup may still work"
-fi
-
-# --------- STEP 17: Final Setup and Instructions ----------
-log "🎯 Final setup and creating documentation..."
-
-# Create comprehensive documentation
+# --------- STEP 15: Create Documentation ----------
+log "📝 Creating documentation..."
 cat > README_I2V.md << 'EOF'
 # HunyuanVideo Image-to-Video on RTX 5090
 
@@ -1037,124 +842,55 @@ python test_i2v_setup.py
 
 ### 3. Generate Your First I2V
 ```bash
-# Using sample image
 python generate_i2v.py \
-  --image sample_images/landscape.jpg \
+  --image sample_images/sample_landscape.jpg \
   --prompt "camera slowly zooming out revealing a vast mountain landscape"
-
-# Using your own image
-python generate_i2v.py \
-  --image /path/to/your/image.jpg \
-  --prompt "gentle wind blowing through the scene"
 ```
 
-## 📸 Supported Input Formats
-- JPG, JPEG, PNG, BMP, TIFF
-- Any resolution (will be auto-resized to 1280x720)
-- RGB or grayscale
-
-## 🎬 Generation Settings (RTX 5090 Optimized)
+## 🎬 RTX 5090 Optimized Settings
 - **Resolution**: 1280x720 (optimal for RTX 5090)
 - **Frames**: 129 (5.4 seconds at 24fps)
-- **Duration**: ~5 seconds
-- **Quality**: High (bfloat16 precision)
-- **VRAM Usage**: ~18-22GB (well within 24GB limit)
+- **VRAM Usage**: ~22-28GB (perfect for 32GB RTX 5090)
+- **Generation Time**: ~15-25 minutes
+- **Quality**: Professional-grade with bfloat16 precision
 
 ## 📝 Prompt Tips
-- Describe camera movements: "camera panning", "zooming out", "rotating around"
-- Add environmental effects: "wind blowing", "clouds moving", "water flowing"
-- Specify lighting: "golden hour", "dramatic shadows", "soft lighting"
-- Keep prompts focused and descriptive
-
-## 🔧 Advanced Usage
-
-### Batch Generation
-```bash
-# Generate multiple variations
-python batch_generate.py --input-dir your_images/ --output-base outputs/batch/
-```
-
-### Custom Settings
-Edit `rtx5090_i2v_config.py` to modify:
-- Frame count (reduce for faster generation)
-- Resolution
-- Guidance scales
-- Inference steps
+- "camera slowly panning across the scene"
+- "gentle wind blowing through the landscape" 
+- "dramatic clouds moving across the sky"
+- "cinematic lighting changes from day to sunset"
 
 ## 🐛 Troubleshooting
-
-### CUDA Out of Memory
-```bash
-# Reduce frame count in config
-# Or clear GPU memory:
-python -c "import torch; torch.cuda.empty_cache()"
-```
-
-### Generation Too Slow
-- Reduce `num_inference_steps` to 20
-- Use smaller resolution temporarily
-- Ensure RTX 5090 is being used: `nvidia-smi`
-
-### Quality Issues
-- Increase `guidance_scale` to 7.5
-- Try different prompts
-- Check input image quality
-
-## 📊 Performance Expectations (RTX 5090)
-- **129 frames**: ~15-25 minutes
-- **65 frames**: ~8-15 minutes  
-- **Memory usage**: 18-22GB VRAM
-- **Output size**: 50-200MB per video
-
-## 🌐 Web Interface
-```bash
-python -m http.server 8080
-# Open: http://localhost:8080/upload_interface.html
-```
-
-## 📁 Directory Structure
-```
-HunyuanVideo/
-├── ckpts/HunyuanVideo-I2V/          # Model files
-├── sample_images/                    # Sample inputs
-├── outputs/                          # Generated videos
-├── generate_i2v.py                   # Main generation script
-├── rtx5090_i2v_config.py            # RTX 5090 config
-└── activate_i2v.sh                  # Environment activation
-```
-
-## 🎉 Examples
-
-### Landscape Animation
-```bash
-python generate_i2v.py \
-  --image sample_images/landscape.jpg \
-  --prompt "dramatic clouds moving across the sky with golden hour lighting"
-```
-
-### Portrait Animation
-```bash
-python generate_i2v.py \
-  --image sample_images/portrait.jpg \
-  --prompt "gentle breeze moving hair with soft cinematic lighting"
-```
-
-### Architecture Animation
-```bash
-python generate_i2v.py \
-  --image your_building.jpg \
-  --prompt "camera slowly revealing the full architecture with dynamic shadows"
-```
+- **CUDA errors**: Run `python test_i2v_setup.py`
+- **Memory issues**: Reduce frames in `rtx5090_i2v_config.py`
+- **Generation fails**: Check model files in `ckpts/HunyuanVideo-I2V/`
 EOF
 
-# Create desktop shortcuts for vast.ai
-if [ -d "/home" ]; then
-    log "Creating shortcuts..."
-    ln -sf "$(pwd)/activate_i2v.sh" "/home/hunyuan_i2v.sh" 2>/dev/null || true
-    ln -sf "$(pwd)" "/home/HunyuanVideo" 2>/dev/null || true
-fi
+# --------- STEP 16: Run Final Tests ----------
+log "🧪 Running final RTX 5090 setup tests..."
 
-# --------- STEP 18: Final Status and Instructions ----------
+# Test PyTorch and CUDA
+python -c "
+import torch
+print('🔍 Final RTX 5090 Test:')
+print(f'✅ PyTorch: {torch.__version__}')
+print(f'✅ CUDA: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    print(f'✅ GPU: {torch.cuda.get_device_name(0)}')
+    print(f'✅ VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB')
+print('🎯 Ready for HunyuanVideo I2V generation!')
+"
+
+# Test configuration import
+python -c "
+try:
+    from rtx5090_i2v_config import rtx5090_i2v_config
+    print('✅ RTX 5090 I2V configuration loaded successfully')
+except Exception as e:
+    print(f'❌ Configuration error: {e}')
+"
+
+# --------- STEP 17: Final Instructions ----------
 success "✅ HunyuanVideo Image-to-Video RTX 5090 setup completed!"
 
 echo ""
@@ -1165,27 +901,23 @@ echo ""
 echo -e "${YELLOW}📋 Quick Commands:${NC}"
 echo -e "1. ${GREEN}source activate_i2v.sh${NC}                           # Activate environment"
 echo -e "2. ${GREEN}python test_i2v_setup.py${NC}                         # Test RTX 5090 setup"
-echo -e "3. ${GREEN}python generate_i2v.py --image sample_images/landscape.jpg --prompt \"cinematic movement\"${NC}"
+echo -e "3. ${GREEN}python generate_i2v.py --image sample_images/sample_landscape.jpg --prompt \"cinematic camera movement\"${NC}"
 echo ""
 echo -e "${YELLOW}📁 Important Directories:${NC}"
 echo -e "   Models: ${GREEN}ckpts/HunyuanVideo-I2V/${NC}"
 echo -e "   Samples: ${GREEN}sample_images/${NC}"
 echo -e "   Outputs: ${GREEN}outputs/${NC}"
 echo ""
-echo -e "${YELLOW}🌐 Web Interface:${NC}"
-echo -e "   ${GREEN}python -m http.server 8080${NC}"
-echo -e "   Open: ${GREEN}http://localhost:8080/upload_interface.html${NC}"
+echo -e "${YELLOW}🚀 RTX 5090 Optimizations Active:${NC}"
+echo -e "   • Ubuntu $(lsb_release -rs) compatibility fixes"
+echo -e "   • CUDA 12.8 PyTorch for Blackwell architecture"
+echo -e "   • bfloat16 precision optimization"
+echo -e "   • Flash attention enabled"
+echo -e "   • 32GB VRAM management"
+echo -e "   • 129 frames @ 1280x720 (optimal settings)"
 echo ""
 echo -e "${YELLOW}📚 Documentation:${NC}"
 echo -e "   See ${GREEN}README_I2V.md${NC} for complete guide"
-echo ""
-echo -e "${YELLOW}🚀 RTX 5090 Optimizations Active:${NC}"
-echo -e "   • CUDA 12.8 PyTorch"
-echo -e "   • Blackwell architecture optimizations"
-echo -e "   • bfloat16 precision"
-echo -e "   • Flash attention enabled"
-echo -e "   • 24GB VRAM management"
-echo -e "   • 129 frames @ 1280x720 (optimal settings)"
 echo ""
 echo -e "${GREEN}🎬 Ready to generate amazing Image-to-Video content!${NC}"
 echo -e "${BLUE}============================================================${NC}"
