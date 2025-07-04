@@ -34,20 +34,30 @@ pip install "pandas==2.2.2" --only-binary :all:
 # Install remaining dependencies without numpy/pandas reversion
 pip install -r requirements.txt --no-deps
 
-# --------- STEP 5: Download Model ----------
+# --------- STEP 5: HuggingFace Auth Token ----------
+echo "🔑 Logging into HuggingFace..."
+if [ -z "$HF_TOKEN" ]; then
+  echo "❌ Hugging Face token not found. Please set HF_TOKEN environment variable."
+  exit 1
+fi
+huggingface-cli login --token "$HF_TOKEN"
+
+# --------- STEP 6: Download Model from HuggingFace ----------
+echo "⬇️ Downloading model from HuggingFace..."
 MODEL_DIR="weights"
-MODEL_FILE="hunyuan_fp8.safetensors"
+MODEL_FILE="hunyuan_720p.ckpt"
 MODEL_PATH="$MODEL_DIR/$MODEL_FILE"
-MODEL_URL="https://civitai.com/api/download/models/1356617?type=Model&format=SafeTensor&size=pruned&fp=fp8"
 
 mkdir -p "$MODEL_DIR"
 
 if [ ! -f "$MODEL_PATH" ]; then
-  echo "⬇️ Downloading model from CivitAI: $MODEL_FILE"
-  wget -O "$MODEL_PATH" --show-progress "$MODEL_URL"
+  huggingface-cli download tencent/HunyuanVideo-I2V \
+    --local-dir "$MODEL_DIR" \
+    --repo-type model \
+    "hunyuan-video-i2v-720p/$MODEL_FILE"
 fi
 
-# --------- STEP 6: Validate Model ----------
+# --------- STEP 7: Validate Model ----------
 echo "✅ Validating model..."
 if [ ! -s "$MODEL_PATH" ]; then
   echo "❌ Error: Model file is missing or incomplete!"
@@ -56,11 +66,11 @@ else
   echo "✅ Model file exists and looks good: $(du -h "$MODEL_PATH")"
 fi
 
-# --------- STEP 7: Prepare Output ----------
+# --------- STEP 8: Prepare Output ----------
 OUTPUT_DIR="outputs/sample"
 mkdir -p "$OUTPUT_DIR"
 
-# --------- STEP 8: Run Inference ----------
+# --------- STEP 9: Run Inference ----------
 echo "🎮 Running video generation..."
 python3 scripts/sample_text2video.py \
   --model-path "$MODEL_PATH" \
@@ -70,12 +80,12 @@ python3 scripts/sample_text2video.py \
   --output "$OUTPUT_DIR" \
   --device cuda
 
-# --------- STEP 9: Convert to Video ----------
+# --------- STEP 10: Convert to Video ----------
 echo "🎩 Converting frames to MP4..."
 ffmpeg -y -framerate 16 -i "$OUTPUT_DIR/%04d.png" -c:v libx264 -pix_fmt yuv420p "$OUTPUT_DIR/output.mp4"
 
-# --------- STEP 10: Done ----------
+# --------- STEP 11: Done ----------
 echo "✅ All done!"
-echo "🎞️ Video saved at: $OUTPUT_DIR/output.mp4"
+echo "🎮 Video saved at: $OUTPUT_DIR/output.mp4"
 echo "📂 Frames saved in: $OUTPUT_DIR"
 echo "🐍 To reactivate env: source hunyuan_env/bin/activate"
