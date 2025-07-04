@@ -1,5 +1,4 @@
 #!/bin/bash
-
 set -e
 
 echo "🚀 Setup on RTX 5090 Vast.ai instance..."
@@ -25,10 +24,15 @@ source hunyuan_env/bin/activate
 echo "📦 Installing Python dependencies..."
 pip install --upgrade pip
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-# Patch numpy compatibility for Python 3.12
-sed -i '/numpy==1.24.4/d' requirements.txt
+
+# Handle numpy/pandas compatibility for Python 3.12
+sed -i '/numpy==/d' requirements.txt
+sed -i '/pandas==/d' requirements.txt
 pip install "numpy>=1.26"
-pip install -r requirements.txt
+pip install "pandas==2.2.2" --only-binary :all:
+
+# Install remaining dependencies without numpy/pandas reversion
+pip install -r requirements.txt --no-deps
 
 # --------- STEP 5: Download Model ----------
 MODEL_DIR="weights"
