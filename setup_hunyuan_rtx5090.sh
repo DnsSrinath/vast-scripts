@@ -118,11 +118,18 @@ apt update
 log "Installing OpenGL packages: $OPENGL_PACKAGES"
 log "Installing GLib package: $GLIB_PACKAGE"
 
-# Fix the dependency issue manually
-apt update && apt install -y \
-    libopengl0 \
-    libglx0 \
-    libgl1-mesa-dri \
+# Detect Ubuntu version and set appropriate packages
+if [[ "$UBUNTU_VERSION" == "24.04" ]] || [[ "$UBUNTU_VERSION" > "22.04" ]]; then
+    OPENGL_PACKAGES="libopengl0 libglx0 libgl1-mesa-dri mesa-utils"
+    GLIB_PACKAGE="libglib2.0-0t64"
+else
+    OPENGL_PACKAGES="libgl1-mesa-glx"
+    GLIB_PACKAGE="libglib2.0-0"
+fi
+
+apt install -y \
+    $OPENGL_PACKAGES \
+    $GLIB_PACKAGE \
     mesa-utils \
     python3 \
     python3-pip \
