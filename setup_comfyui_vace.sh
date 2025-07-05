@@ -1,35 +1,25 @@
 #!/bin/bash
 
 # ==============================================================================
-# 🧠 WAN 2.1 + VACE ComfyUI Setup Script for Vast.ai
-# 🔧 Includes ComfyUI-Manager, WAN Video Wrapper, VACE 14B GGUF, GGUF loader
+# 🧠 WAN 2.1 + VACE ComfyUI Setup Script for Vast.ai (Video-to-Video Ready)
+# 🔧 Includes ComfyUI, ComfyUI-Manager, WanVideoWrapper, and official VACE models
 # 🔁 Auto-starts ComfyUI in a tmux session
 #
-# 📦 Installation Instructions:
-# ------------------------------------------------------------------------------
+# 📦 Install:
 # wget -O setup_comfyui_vace.sh https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/setup_comfyui_vace.sh
 # chmod +x setup_comfyui_vace.sh
 # ./setup_comfyui_vace.sh
-# 
-# ✅ To start ComfyUI later:
-# bash /workspace/start_comfyui.sh
 #
-# 🌐 Access:
-# http://<your-public-ip>:8188 or mapped port (e.g. http://175.143.160.92:64554)
-#
-# 🌐 Article:
-# https://docs.comfy.org/tutorials/video/wan/vace
+# 🔗 WAN VACE Official Guide: https://docs.comfy.org/tutorials/video/wan/vace
 # ==============================================================================
 
 set -e
 
-# ========== COLORS ==========
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 log() { echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}"; }
 warn() { echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}"; }
 info() { echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1${NC}"; }
 
-# ========== CHECK ==========
 check_system() {
     log "Checking system and GPU..."
     available_space=$(df /workspace | awk 'NR==2 {print $4}')
@@ -43,206 +33,106 @@ check_system() {
     fi
 }
 
-# ========== APT ==========
 install_apt_deps() {
-    log "Installing system dependencies..."
+    log "Installing system packages..."
     apt-get update -qq
     apt-get install -y python3 python3-pip python3-venv git wget curl unzip build-essential \
         libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 tmux htop nano ffmpeg
-    log "System packages installed."
 }
 
-# ========== PYTHON ==========
 install_python_deps() {
-    log "Installing Python dependencies..."
+    log "Installing Python packages..."
     python3 -m pip install --upgrade pip
-
     if ! python3 -c "import torch" &>/dev/null; then
-        log "Installing PyTorch..."
         python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
     else
         info "PyTorch already installed. Skipping."
     fi
-
     python3 -m pip install flash-attn triton bitsandbytes || true
     python3 -m pip install numpy opencv-python Pillow requests tqdm \
         transformers accelerate xformers safetensors huggingface-hub
-    log "Python packages installed."
 }
 
-# ========== COMFYUI ==========
 install_comfyui() {
     log "Installing ComfyUI..."
     cd /workspace
-    if [ -d "ComfyUI" ]; then
-        info "ComfyUI already exists. Skipping clone."
-    else
-        git clone https://github.com/comfyanonymous/ComfyUI.git
-    fi
+    [ -d "ComfyUI" ] || git clone https://github.com/comfyanonymous/ComfyUI.git
     cd ComfyUI
     python3 -m pip install -r requirements.txt
-    log "ComfyUI setup complete."
 }
 
-# ========== COMFYUI MANAGER ==========
 install_manager() {
     log "Installing ComfyUI Manager..."
     cd /workspace/ComfyUI/custom_nodes
-    if [ ! -d "ComfyUI-Manager" ]; then
-        git clone https://github.com/ltdrdata/ComfyUI-Manager.git
-    else
-        info "ComfyUI-Manager already exists. Skipping."
-    fi
+    [ -d "ComfyUI-Manager" ] || git clone https://github.com/ltdrdata/ComfyUI-Manager.git
 }
 
-# ========== GGUF ==========
-install_gguf() {
-    log "Installing ComfyUI-GGUF..."
-    cd /workspace/ComfyUI/custom_nodes
-    if [ ! -d "ComfyUI-GGUF" ]; then
-        git clone https://github.com/city96/ComfyUI-GGUF.git
-        cd ComfyUI-GGUF && python3 -m pip install -r requirements.txt || true
-    else
-        info "ComfyUI-GGUF already installed. Skipping."
-    fi
-}
-
-# ========== WAN + VIDEO ==========
 install_wan_nodes() {
-    log "Installing WAN 2.1 + video support nodes..."
+    log "Installing WAN 2.1 + video wrapper nodes..."
     cd /workspace/ComfyUI/custom_nodes
 
-    # VideoHelperSuite
     if [ ! -d "ComfyUI-VideoHelperSuite" ]; then
         git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
         cd ComfyUI-VideoHelperSuite && python3 -m pip install -r requirements.txt || true && cd ..
-    else
-        info "ComfyUI-VideoHelperSuite already exists. Skipping."
     fi
 
-    # Advanced ControlNet
     if [ ! -d "ComfyUI-Advanced-ControlNet" ]; then
         git clone https://github.com/Fannovel16/ComfyUI-Advanced-ControlNet.git
         cd ComfyUI-Advanced-ControlNet && python3 -m pip install -r requirements.txt || true && cd ..
-    else
-        info "ComfyUI-Advanced-ControlNet already exists. Skipping."
     fi
 
-    # ✅ Corrected WanVideoWrapper repo (public, working)
     if [ ! -d "ComfyUI-WanVideoWrapper" ]; then
         git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git
         cd ComfyUI-WanVideoWrapper && python3 -m pip install -r requirements.txt || true && cd ..
-    else
-        info "ComfyUI-WanVideoWrapper already exists. Skipping."
-    fi
-}
-
-# ========== VACE GGUF MODEL ==========
-download_vace_model() {
-    log "Downloading VACE 14B GGUF model..."
-    MODEL_DIR="/workspace/ComfyUI/models/ggml"
-    mkdir -p "$MODEL_DIR"
-    cd "$MODEL_DIR"
-    FILE="Wan2.1_14B_VACE-Q5_K_M.gguf"
-    URL="https://huggingface.co/QuantFactory/Wan2.1_14B_VACE-GGUF/resolve/main/${FILE}"
-    if [ ! -f "$FILE" ]; then
-        wget "$URL" -O "$FILE"
-        log "Model downloaded: $FILE"
-    else
-        info "Model already exists. Skipping download."
-    fi
-}
-# ========== Download Default ModelsL ==========
-download_default_models() {
-    log "Downloading SDXL base checkpoint + VAE..."
-
-    CHECKPOINT_DIR="/workspace/ComfyUI/models/checkpoints"
-    VAE_DIR="/workspace/ComfyUI/models/vae"
-
-    mkdir -p "$CHECKPOINT_DIR"
-    mkdir -p "$VAE_DIR"
-
-    # SDXL Base Checkpoint
-    if [ ! -f "$CHECKPOINT_DIR/sd_xl_base_1.0.safetensors" ]; then
-        wget -O "$CHECKPOINT_DIR/sd_xl_base_1.0.safetensors" \
-        https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors
-        log "Downloaded: sd_xl_base_1.0.safetensors"
-    else
-        info "Checkpoint already exists. Skipping."
-    fi
-
-    # VAE
-    if [ ! -f "$VAE_DIR/sdxl_vae.safetensors" ]; then
-        wget -O "$VAE_DIR/sdxl_vae.safetensors" \
-        https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl_vae.safetensors
-        log "Downloaded: sdxl_vae.safetensors"
-    else
-        info "VAE already exists. Skipping."
     fi
 }
 
 download_wan_vace_models() {
-  log "Downloading WAN‑VACE required models..."
+    log "Downloading WAN 2.1 VACE models..."
 
-  DM_DIR="/workspace/ComfyUI/models/diffusion_models"
-  TE_DIR="/workspace/ComfyUI/models/text_encoders"
-  VAE_DIR="/workspace/ComfyUI/models/vae"
+    DM_DIR="/workspace/ComfyUI/models/diffusion_models"
+    VAE_DIR="/workspace/ComfyUI/models/vae"
+    TE_DIR="/workspace/ComfyUI/models/text_encoders"
 
-  mkdir -p "$DM_DIR" "$TE_DIR" "$VAE_DIR"
+    mkdir -p "$DM_DIR" "$VAE_DIR" "$TE_DIR"
 
-  # WAN VACE 14B diffusion model
-  file1="wan2.1_vace_14B_fp16.safetensors"
-  url1="https://huggingface.co/QuantFactory/Wan2.1_VACE/resolve/main/${file1}"
-  if [ ! -f "$DM_DIR/$file1" ]; then
-    wget -O "$DM_DIR/$file1" "$url1" && log "Downloaded $file1"
-  else info "$file1 exists, skipping."
-  fi
+    # 1. WAN 2.1 VACE 14B FP16 diffusion model
+    file1="wan2.1_vace_14B_fp16.safetensors"
+    url1="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/${file1}"
+    [ -f "$DM_DIR/$file1" ] || wget -O "$DM_DIR/$file1" "$url1"
 
-  # VAE
-  file2="wan_2.1_vae.safetensors"
-  url2="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/$file2"
-  if [ ! -f "$VAE_DIR/$file2" ]; then
-    wget -O "$VAE_DIR/$file2" "$url2" && log "Downloaded $file2"
-  else info "$file2 exists, skipping."
-  fi
+    # 2. VAE
+    file2="wan_2.1_vae.safetensors"
+    url2="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/${file2}"
+    [ -f "$VAE_DIR/$file2" ] || wget -O "$VAE_DIR/$file2" "$url2"
 
-  # Text encoder (UMT5 XX-L FP8 scaled is smaller)
-  file3="umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-  url3="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/$file3"
-  if [ ! -f "$TE_DIR/$file3" ]; then
-    wget -O "$TE_DIR/$file3" "$url3" && log "Downloaded $file3"
-  else info "$file3 exists, skipping."
-  fi
+    # 3. UMT5 text encoder
+    file3="umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+    url3="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/${file3}"
+    [ -f "$TE_DIR/$file3" ] || wget -O "$TE_DIR/$file3" "$url3"
 }
 
-
-# ========== STARTUP SCRIPT ==========
 create_startup_script() {
-    log "Creating tmux startup script..."
+    log "Creating ComfyUI tmux startup script..."
     cat <<EOF > /workspace/start_comfyui.sh
 #!/bin/bash
 tmux new-session -d -s comfy "cd /workspace/ComfyUI && python3 main.py --listen --port 8188"
 EOF
     chmod +x /workspace/start_comfyui.sh
-    log "Startup script created: /workspace/start_comfyui.sh"
 }
 
-# ========== SHOW ACCESS ==========
 show_access_url() {
     PUBLIC_IP=$(curl -s ifconfig.me || echo "localhost")
-    echo -e "\n${YELLOW}🟢 Access ComfyUI at: http://$PUBLIC_IP:8188 (or use your mapped Vast.ai port)${NC}"
+    echo -e "\n${YELLOW}🟢 Access ComfyUI at: http://$PUBLIC_IP:8188 (or mapped Vast.ai port)${NC}"
 }
 
-# ========== MAIN ==========
 main() {
     check_system
     install_apt_deps
     install_python_deps
     install_comfyui
     install_manager
-    install_gguf
     install_wan_nodes
-    download_vace_model
     download_wan_vace_models
     create_startup_script
 
