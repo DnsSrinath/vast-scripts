@@ -18,15 +18,12 @@
 # http://<your-public-ip>:8188 or mapped port (e.g. http://175.143.160.92:64554)
 # ==============================================================================
 
-set -e  # Exit on error
+set -e
 
 # ========== COLORS ==========
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-
-# ========== LOG ==========
 log() { echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}"; }
 warn() { echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}"; }
-error() { echo -e "${RED}[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}"; }
 info() { echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1${NC}"; }
 
 # ========== CHECK ==========
@@ -49,18 +46,28 @@ install_apt_deps() {
     apt-get update -qq
     apt-get install -y python3 python3-pip python3-venv git wget curl unzip build-essential \
         libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 tmux htop nano ffmpeg
-    log "System dependencies installed."
+    log "System packages installed."
 }
 
 # ========== PYTHON ==========
 install_python_deps() {
     log "Installing Python dependencies..."
+
     python3 -m pip install --upgrade pip
-    python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-    python3 -m pip install flash-attn triton bitsandbytes
+
+    # Skip reinstalling PyTorch if already present
+    if ! python3 -c "import torch" &>/dev/null; then
+        log "Installing PyTorch..."
+        python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+    else
+        info "PyTorch already installed. Skipping."
+    fi
+
+    python3 -m pip install flash-attn triton bitsandbytes || true
     python3 -m pip install numpy opencv-python Pillow requests tqdm \
         transformers accelerate xformers safetensors huggingface-hub
-    log "Python dependencies installed."
+
+    log "Python packages installed."
 }
 
 # ========== COMFYUI ==========
@@ -78,37 +85,46 @@ install_comfyui() {
 install_manager() {
     log "Installing ComfyUI Manager..."
     cd /workspace/ComfyUI/custom_nodes
-    git clone https://github.com/ltdrdata/ComfyUI-Manager.git || warn "Already exists"
-    log "ComfyUI Manager installed."
+    if [ ! -d "ComfyUI-Manager" ]; then
+        git clone https://github.com/ltdrdata/ComfyUI-Manager.git
+        log "ComfyUI Manager installed."
+    else
+        info "ComfyUI Manager already present."
+    fi
 }
 
 # ========== GGUF NODE ==========
 install_gguf() {
     log "Installing ComfyUI-GGUF..."
     cd /workspace/ComfyUI/custom_nodes
-    git clone https://github.com/city96/ComfyUI-GGUF.git || true
-    cd ComfyUI-GGUF && python3 -m pip install -r requirements.txt || true
-    log "GGUF node installed."
+    if [ ! -d "ComfyUI-GGUF" ]; then
+        git clone https://github.com/city96/ComfyUI-GGUF.git
+        cd ComfyUI-GGUF
+        python3 -m pip install -r requirements.txt || true
+    else
+        info "ComfyUI-GGUF already installed."
+    fi
 }
 
 # ========== WAN + VIDEO ==========
 install_wan_nodes() {
-    log "Installing WAN 2.1 + video support nodes..."
+    log "Installing WAN 2.1 + video support..."
+
     cd /workspace/ComfyUI/custom_nodes
 
-    git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git || true
-    cd ComfyUI-VideoHelperSuite && python3 -m pip install -r requirements.txt || true
-    cd ..
+    [[ -d ComfyUI-VideoHelperSuite ]] || \
+        git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git && \
+        (cd ComfyUI-VideoHelperSuite && python3 -m pip install -r requirements.txt || true)
 
-    git clone https://github.com/Fannovel16/ComfyUI-Advanced-ControlNet.git || true
-    cd ComfyUI-Advanced-ControlNet && python3 -m pip install -r requirements.txt || true
-    cd ..
+    [[ -d ComfyUI-Advanced-ControlNet ]] || \
+        git clone https://github.com/Fannovel16/ComfyUI-Advanced-ControlNet.git && \
+        (cd ComfyUI-Advanced-ControlNet && python3 -m pip install -r requirements.txt || true)
 
-    git clone https://github.com/QuantFactory/ComfyUI-WanVideoWrapper.git || true
-    cd ComfyUI-WanVideoWrapper && python3 -m pip install -r requirements.txt || true
-    cd ..
+    [[ -d ComfyUI-WanVideoWrapper ]] || \
+        git clone https://github.com/QuantFactory/ComfyUI-WanVideoWrapper.git && \
+        (cd ComfyUI-WanVideoWrapper && python3 -m pip install -r requirements.txt || true)
 
-    log "WAN and video nodes installed."
+    log "WAN + video nodes setup complete."
 }
 
 # ========== VACE GGUF MODEL ==========
@@ -119,11 +135,15 @@ download_vace_model() {
     cd "$MODEL_DIR"
     FILE="Wan2.1_14B_VACE-Q5_K_M.gguf"
     URL="https://huggingface.co/QuantFactory/Wan2.1_14B_VACE-GGUF/resolve/main/${FILE}"
-    [ -f "$FILE" ] || wget "$URL" -O "$FILE"
-    log "Model downloaded to $MODEL_DIR"
+    if [ ! -f "$FILE" ]; then
+        wget "$URL" -O "$FILE"
+        log "Model downloaded: $FILE"
+    else
+        info "Model already exists. Skipping download."
+    fi
 }
 
-# ========== CREATE STARTUP ==========
+# ========== STARTUP SCRIPT ==========
 create_startup_script() {
     log "Creating tmux startup script..."
     cat <<EOF > /workspace/start_comfyui.sh
@@ -131,13 +151,13 @@ create_startup_script() {
 tmux new-session -d -s comfy "cd /workspace/ComfyUI && python3 main.py --listen --port 8188"
 EOF
     chmod +x /workspace/start_comfyui.sh
-    log "Created: /workspace/start_comfyui.sh"
+    log "Startup script created: /workspace/start_comfyui.sh"
 }
 
 # ========== SHOW ACCESS ==========
 show_access_url() {
-    PUBLIC_IP=$(curl -s ifconfig.me)
-    echo -e "\n${YELLOW}🟢 Access ComfyUI at: http://$PUBLIC_IP:8188 (or mapped port)${NC}"
+    PUBLIC_IP=$(curl -s ifconfig.me || echo "localhost")
+    echo -e "\n${YELLOW}🟢 Access ComfyUI at: http://$PUBLIC_IP:8188 (or use your mapped Vast.ai port)${NC}"
 }
 
 # ========== MAIN ==========
