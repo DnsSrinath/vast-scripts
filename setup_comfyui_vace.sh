@@ -152,6 +152,34 @@ download_vace_model() {
         info "Model already exists. Skipping download."
     fi
 }
+# ========== Download Default ModelsL ==========
+download_default_models() {
+    log "Downloading SDXL base checkpoint + VAE..."
+
+    CHECKPOINT_DIR="/workspace/ComfyUI/models/checkpoints"
+    VAE_DIR="/workspace/ComfyUI/models/vae"
+
+    mkdir -p "$CHECKPOINT_DIR"
+    mkdir -p "$VAE_DIR"
+
+    # SDXL Base Checkpoint
+    if [ ! -f "$CHECKPOINT_DIR/sd_xl_base_1.0.safetensors" ]; then
+        wget -O "$CHECKPOINT_DIR/sd_xl_base_1.0.safetensors" \
+        https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors
+        log "Downloaded: sd_xl_base_1.0.safetensors"
+    else
+        info "Checkpoint already exists. Skipping."
+    fi
+
+    # VAE
+    if [ ! -f "$VAE_DIR/sdxl_vae.safetensors" ]; then
+        wget -O "$VAE_DIR/sdxl_vae.safetensors" \
+        https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl_vae.safetensors
+        log "Downloaded: sdxl_vae.safetensors"
+    else
+        info "VAE already exists. Skipping."
+    fi
+}
 
 # ========== STARTUP SCRIPT ==========
 create_startup_script() {
@@ -180,6 +208,7 @@ main() {
     install_gguf
     install_wan_nodes
     download_vace_model
+    download_default_models
     create_startup_script
 
     log "✅ Setup complete!"
