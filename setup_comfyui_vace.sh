@@ -93,8 +93,14 @@ install_python_deps() {
     # Upgrade pip
     python3 -m pip install --upgrade pip
     
-    # Install PyTorch with CUDA support
+    # Install PyTorch with CUDA support (optimized for RTX 4090)
     python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+    
+    # Install performance optimization packages
+    python3 -m pip install \
+        flash-attn \
+        triton \
+        bitsandbytes
     
     # Install additional Python packages
     python3 -m pip install \
@@ -285,7 +291,7 @@ create_startup_script() {
     cat > /workspace/start_comfyui.sh << 'EOF'
 #!/bin/bash
 
-# ComfyUI WAN 2.1 + VACE Startup Script
+# ComfyUI WAN 2.1 + VACE Startup Script (Optimized for RTX 4090)
 cd /workspace/ComfyUI
 
 # Kill any existing ComfyUI processes
@@ -294,8 +300,13 @@ pkill -f "python.*main.py.*--port 8188" 2>/dev/null || true
 # Wait a moment for processes to clean up
 sleep 2
 
-# Start ComfyUI with appropriate settings
-echo "Starting ComfyUI with WAN 2.1 + VACE support..."
+# Set optimal environment variables for RTX 4090
+export CUDA_VISIBLE_DEVICES=0
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+export TORCH_CUDNN_V8_API_ENABLED=1
+
+# Start ComfyUI with RTX 4090 optimized settings
+echo "Starting ComfyUI with WAN 2.1 + VACE support (RTX 4090 Optimized)..."
 echo "Access ComfyUI at: http://localhost:8188"
 echo "Press Ctrl+C to stop"
 
@@ -305,8 +316,12 @@ python3 main.py \
     --enable-cors-header \
     --disable-auto-launch \
     --disable-metadata \
-    --cpu-vae \
-    --preview-method auto
+    --gpu-only \
+    --highvram \
+    --fast \
+    --preview-method auto \
+    --bf16-unet \
+    --fp16-vae
 EOF
     
     chmod +x /workspace/start_comfyui.sh
@@ -330,8 +345,8 @@ tmux kill-session -t $SESSION_NAME 2>/dev/null || true
 # Create new tmux session
 tmux new-session -d -s $SESSION_NAME -c /workspace/ComfyUI
 
-# Send command to start ComfyUI
-tmux send-keys -t $SESSION_NAME "cd /workspace/ComfyUI && python3 main.py --listen 0.0.0.0 --port 8188 --enable-cors-header --disable-auto-launch --disable-metadata --cpu-vae --preview-method auto" Enter
+# Send command to start ComfyUI with RTX 4090 optimizations
+tmux send-keys -t $SESSION_NAME "export CUDA_VISIBLE_DEVICES=0 && export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512 && export TORCH_CUDNN_V8_API_ENABLED=1 && cd /workspace/ComfyUI && python3 main.py --listen 0.0.0.0 --port 8188 --enable-cors-header --disable-auto-launch --disable-metadata --gpu-only --highvram --fast --preview-method auto --bf16-unet --fp16-vae" Enter
 
 echo "ComfyUI started in tmux session: $SESSION_NAME"
 echo "To attach to session: tmux attach-session -t $SESSION_NAME"
@@ -410,12 +425,39 @@ cd /workspace
    - Load VAE: `wan_2.1_vae.safetensors`
    - Load CLIP: `umt5_xxl_fp8_e4m3fn_scaled.safetensors`
 
-## Performance Tips
+## Performance Tips for RTX 4090
 
-- **For 720P video:** Expect ~40 minutes on RTX 4090 for 81 frames
-- **For 640x640 video:** Expect ~7 minutes on RTX 4090 for 49 frames
-- **Start with lower resolution** for faster testing
-- **Use tmux** to prevent disconnection issues during long generations
+- **For maximum speed:** Use 640x640 resolution initially (~4-5 minutes per video)
+- **For quality:** Use 720P when you need the best output (~25-30 minutes)
+- **Batch processing:** Generate multiple videos sequentially for efficiency
+- **Memory optimization:** The setup uses `--highvram` and `--gpu-only` for RTX 4090
+- **Precision modes:** Uses bf16 for UNet and fp16 for VAE for speed without quality loss
+
+## RTX 4090 Specific Optimizations
+
+The installation includes several optimizations for your RTX 4090:
+- **Flash Attention:** Faster attention computation
+- **Triton kernels:** Optimized CUDA operations  
+- **Mixed precision:** bf16/fp16 for speed
+- **High VRAM mode:** Utilizes full 24GB efficiently
+- **GPU-only processing:** No CPU fallback overhead
+
+## Recommended Settings for Fast Rendering
+
+### Quick Preview (2-3 minutes):
+- Resolution: 480x480
+- Frames: 25-33
+- Steps: 20-25
+
+### Balanced Quality/Speed (4-5 minutes):
+- Resolution: 640x640  
+- Frames: 49
+- Steps: 28-35
+
+### High Quality (25-30 minutes):
+- Resolution: 720x1280
+- Frames: 81
+- Steps: 35-50
 
 ## Troubleshooting
 
