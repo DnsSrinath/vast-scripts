@@ -10,6 +10,11 @@
 # chmod +x setup_comfyui_vace.sh
 # ./setup_comfyui_vace.sh
 #
+# 🏁 Flags:
+#   --skip-env     Skip apt and pip dependency installation
+#   --skip-models  Skip downloading model files
+#   --force-models Force re-download of all model files
+#
 # 🔗 WAN VACE Official Guide: https://docs.comfy.org/tutorials/video/wan/vace
 # ==============================================================================
 
@@ -19,6 +24,18 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC
 log() { echo -e "${GREEN}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}"; }
 warn() { echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}"; }
 info() { echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1${NC}"; }
+
+SKIP_MODELS=false
+FORCE_MODELS=false
+SKIP_ENV=false
+
+for arg in "$@"; do
+  case $arg in
+    --skip-models) SKIP_MODELS=true ;;
+    --force-models) FORCE_MODELS=true ;;
+    --skip-env) SKIP_ENV=true ;;
+  esac
+done
 
 check_system() {
     log "Checking system and GPU..."
@@ -56,9 +73,13 @@ install_python_deps() {
 install_comfyui() {
     log "Installing ComfyUI..."
     cd /workspace
-    [ -d "ComfyUI" ] || git clone https://github.com/comfyanonymous/ComfyUI.git
-    cd ComfyUI
-    python3 -m pip install -r requirements.txt
+    if [ -d "ComfyUI" ]; then
+        info "ComfyUI already installed. Skipping clone."
+    else
+        git clone https://github.com/comfyanonymous/ComfyUI.git
+        cd ComfyUI
+        python3 -m pip install -r requirements.txt
+    fi
 }
 
 install_manager() {
@@ -88,12 +109,16 @@ install_wan_nodes() {
 }
 
 download_wan_vace_models() {
+    if [ "$SKIP_MODELS" = true ]; then
+        log "Skipping model downloads (--skip-models)"
+        return
+    fi
+
     log "Downloading WAN 2.1 VACE models..."
 
     DM_DIR="/workspace/ComfyUI/models/diffusion_models"
     VAE_DIR="/workspace/ComfyUI/models/vae"
     TE_DIR="/workspace/ComfyUI/models/text_encoders"
-
     mkdir -p "$DM_DIR" "$VAE_DIR" "$TE_DIR"
 
     download_and_verify() {
@@ -102,13 +127,28 @@ download_wan_vace_models() {
         local path=$3
         local min_size=$4
 
-        log "Downloading: $file"
-        rm -f "$path/$file"
-        wget -O "$path/$file" "$url"
+        fullpath="$path/$file"
+        if [ -f "$fullpath" ]; then
+            local actual_size=$(stat -c %s "$fullpath")
+            if [ "$actual_size" -ge "$min_size" ]; then
+                if [ "$FORCE_MODELS" = true ]; then
+                    warn "$file is valid but will be re-downloaded (--force-models enabled)"
+                else
+                    echo -e "${GREEN}✅ $file already present and valid. Skipping download.${NC}"
+                    return
+                fi
+            else
+                warn "$file exists but is too small. Re-downloading..."
+            fi
+        fi
 
-        local actual_size=$(stat -c %s "$path/$file")
+        log "Downloading: $file"
+        wget -O "$fullpath" "$url"
+
+        local actual_size=$(stat -c %s "$fullpath")
         if [ "$actual_size" -lt "$min_size" ]; then
-            echo -e "${RED}❌ $file download failed or incomplete! Size: $actual_size bytes${NC}"
+            echo -e "${RED}❌ $file download failed or incomplete!${NC}"
+            echo -e "${YELLOW}Expected at least: $min_size bytes, got: $actual_size bytes${NC}"
             exit 1
         else
             echo -e "${GREEN}✅ $file verified. Size: $actual_size bytes${NC}"
@@ -129,7 +169,7 @@ download_wan_vace_models() {
 
     download_and_verify "umt5_xxl_fp16.safetensors" \
         "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors" \
-        "$TE_DIR" 18000000000
+        "$TE_DIR" 11300000000
 }
 
 create_startup_script() {
@@ -155,8 +195,14 @@ show_access_url() {
 
 main() {
     check_system
-    install_apt_deps
-    install_python_deps
+
+    if [ "$SKIP_ENV" = false ]; then
+        install_apt_deps
+        install_python_deps
+    else
+        log "Skipping environment setup (--skip-env)"
+    fi
+
     install_comfyui
     install_manager
     install_wan_nodes
