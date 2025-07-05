@@ -14,7 +14,7 @@
 # ✅ To start ComfyUI later:
 # bash /workspace/start_comfyui.sh
 #
-# 🌐 Access it via:
+# 🌐 Access:
 # http://<your-public-ip>:8188 or mapped port (e.g. http://175.143.160.92:64554)
 # ==============================================================================
 
@@ -52,10 +52,8 @@ install_apt_deps() {
 # ========== PYTHON ==========
 install_python_deps() {
     log "Installing Python dependencies..."
-
     python3 -m pip install --upgrade pip
 
-    # Skip reinstalling PyTorch if already present
     if ! python3 -c "import torch" &>/dev/null; then
         log "Installing PyTorch..."
         python3 -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
@@ -66,7 +64,6 @@ install_python_deps() {
     python3 -m pip install flash-attn triton bitsandbytes || true
     python3 -m pip install numpy opencv-python Pillow requests tqdm \
         transformers accelerate xformers safetensors huggingface-hub
-
     log "Python packages installed."
 }
 
@@ -74,11 +71,14 @@ install_python_deps() {
 install_comfyui() {
     log "Installing ComfyUI..."
     cd /workspace
-    rm -rf ComfyUI || true
-    git clone https://github.com/comfyanonymous/ComfyUI.git
+    if [ -d "ComfyUI" ]; then
+        info "ComfyUI already exists. Skipping clone."
+    else
+        git clone https://github.com/comfyanonymous/ComfyUI.git
+    fi
     cd ComfyUI
     python3 -m pip install -r requirements.txt
-    log "ComfyUI installed."
+    log "ComfyUI setup complete."
 }
 
 # ========== COMFYUI MANAGER ==========
@@ -87,44 +87,51 @@ install_manager() {
     cd /workspace/ComfyUI/custom_nodes
     if [ ! -d "ComfyUI-Manager" ]; then
         git clone https://github.com/ltdrdata/ComfyUI-Manager.git
-        log "ComfyUI Manager installed."
     else
-        info "ComfyUI Manager already present."
+        info "ComfyUI-Manager already exists. Skipping."
     fi
 }
 
-# ========== GGUF NODE ==========
+# ========== GGUF ==========
 install_gguf() {
     log "Installing ComfyUI-GGUF..."
     cd /workspace/ComfyUI/custom_nodes
     if [ ! -d "ComfyUI-GGUF" ]; then
         git clone https://github.com/city96/ComfyUI-GGUF.git
-        cd ComfyUI-GGUF
-        python3 -m pip install -r requirements.txt || true
+        cd ComfyUI-GGUF && python3 -m pip install -r requirements.txt || true
     else
-        info "ComfyUI-GGUF already installed."
+        info "ComfyUI-GGUF already installed. Skipping."
     fi
 }
 
 # ========== WAN + VIDEO ==========
 install_wan_nodes() {
-    log "Installing WAN 2.1 + video support..."
-
+    log "Installing WAN 2.1 + video support nodes..."
     cd /workspace/ComfyUI/custom_nodes
 
-    [[ -d ComfyUI-VideoHelperSuite ]] || \
-        git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git && \
-        (cd ComfyUI-VideoHelperSuite && python3 -m pip install -r requirements.txt || true)
+    # VideoHelperSuite
+    if [ ! -d "ComfyUI-VideoHelperSuite" ]; then
+        git clone https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git
+        cd ComfyUI-VideoHelperSuite && python3 -m pip install -r requirements.txt || true && cd ..
+    else
+        info "ComfyUI-VideoHelperSuite already exists. Skipping."
+    fi
 
-    [[ -d ComfyUI-Advanced-ControlNet ]] || \
-        git clone https://github.com/Fannovel16/ComfyUI-Advanced-ControlNet.git && \
-        (cd ComfyUI-Advanced-ControlNet && python3 -m pip install -r requirements.txt || true)
+    # Advanced ControlNet
+    if [ ! -d "ComfyUI-Advanced-ControlNet" ]; then
+        git clone https://github.com/Fannovel16/ComfyUI-Advanced-ControlNet.git
+        cd ComfyUI-Advanced-ControlNet && python3 -m pip install -r requirements.txt || true && cd ..
+    else
+        info "ComfyUI-Advanced-ControlNet already exists. Skipping."
+    fi
 
-    [[ -d ComfyUI-WanVideoWrapper ]] || \
-        git clone https://github.com/QuantFactory/ComfyUI-Wan2.1_VideoWrapper.git ComfyUI-WanVideoWrapper && \
-        (cd ComfyUI-WanVideoWrapper && python3 -m pip install -r requirements.txt || true)
-
-    log "WAN + video nodes setup complete."
+    # ✅ Corrected WanVideoWrapper repo (public, working)
+    if [ ! -d "ComfyUI-WanVideoWrapper" ]; then
+        git clone https://github.com/kijai/ComfyUI-WanVideoWrapper.git
+        cd ComfyUI-WanVideoWrapper && python3 -m pip install -r requirements.txt || true && cd ..
+    else
+        info "ComfyUI-WanVideoWrapper already exists. Skipping."
+    fi
 }
 
 # ========== VACE GGUF MODEL ==========
