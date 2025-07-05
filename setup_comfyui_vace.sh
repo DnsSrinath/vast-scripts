@@ -37,7 +37,7 @@ install_apt_deps() {
     log "Installing system packages..."
     apt-get update -qq
     apt-get install -y python3 python3-pip python3-venv git wget curl unzip build-essential \
-        libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 tmux htop nano ffmpeg
+        libgl1 libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 tmux htop nano ffmpeg
 }
 
 install_python_deps() {
