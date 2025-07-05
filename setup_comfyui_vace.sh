@@ -16,6 +16,9 @@
 #
 # 🌐 Access:
 # http://<your-public-ip>:8188 or mapped port (e.g. http://175.143.160.92:64554)
+#
+# 🌐 Article:
+# https://docs.comfy.org/tutorials/video/wan/vace
 # ==============================================================================
 
 set -e
