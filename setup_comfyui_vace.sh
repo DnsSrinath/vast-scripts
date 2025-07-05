@@ -96,44 +96,38 @@ download_wan_vace_models() {
 
     mkdir -p "$DM_DIR" "$VAE_DIR" "$TE_DIR"
 
-    check_and_download() {
+    download_and_verify() {
         local file=$1
         local url=$2
         local path=$3
-        local expected_min_size=$4
+        local min_size=$4
 
-        if [ -f "$path/$file" ]; then
-            actual_size=$(stat -c %s "$path/$file")
-            if [ "$actual_size" -ge "$expected_min_size" ]; then
-                log "$file already exists and size looks correct. Skipping."
-                return
-            else
-                warn "$file exists but may be corrupted. Re-downloading."
-                rm -f "$path/$file"
-            fi
-        fi
-
-        log "Downloading $file..."
+        log "Downloading: $file"
+        rm -f "$path/$file"
         wget -O "$path/$file" "$url"
-        actual_size=$(stat -c %s "$path/$file")
-        if [ "$actual_size" -lt "$expected_min_size" ]; then
-            warn "$file downloaded but size is smaller than expected!"
+
+        local actual_size=$(stat -c %s "$path/$file")
+        if [ "$actual_size" -lt "$min_size" ]; then
+            echo -e "${RED}❌ $file download failed or incomplete! Size: $actual_size bytes${NC}"
+            exit 1
+        else
+            echo -e "${GREEN}✅ $file verified. Size: $actual_size bytes${NC}"
         fi
     }
 
-    check_and_download "wan2.1_vace_14B_fp16.safetensors" \
+    download_and_verify "wan2.1_vace_14B_fp16.safetensors" \
         "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_vace_14B_fp16.safetensors" \
         "$DM_DIR" 8500000000
 
-    check_and_download "wan_2.1_vae.safetensors" \
+    download_and_verify "wan_2.1_vae.safetensors" \
         "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors" \
         "$VAE_DIR" 550000000
 
-    check_and_download "umt5_xxl_fp8_e4m3fn_scaled.safetensors" \
+    download_and_verify "umt5_xxl_fp8_e4m3fn_scaled.safetensors" \
         "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors" \
         "$TE_DIR" 9000000000
 
-    check_and_download "umt5_xxl_fp16.safetensors" \
+    download_and_verify "umt5_xxl_fp16.safetensors" \
         "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors" \
         "$TE_DIR" 18000000000
 }
