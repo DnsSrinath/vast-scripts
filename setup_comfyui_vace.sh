@@ -125,7 +125,7 @@ download_wan_vace_models() {
 
     download_and_verify "umt5_xxl_fp8_e4m3fn_scaled.safetensors" \
         "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors" \
-        "$TE_DIR" 9000000000
+        "$TE_DIR" 6300000000
 
     download_and_verify "umt5_xxl_fp16.safetensors" \
         "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors" \
