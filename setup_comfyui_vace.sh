@@ -106,16 +106,15 @@ download_wan_vace_models() {
     url2="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/${file2}"
     [ -f "$VAE_DIR/$file2" ] || wget -O "$VAE_DIR/$file2" "$url2"
 
-    # 3. UMT5 text encoder
+    # 3. UMT5 text encoder (scaled FP8 version)
     file3="umt5_xxl_fp8_e4m3fn_scaled.safetensors"
     url3="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/${file3}"
     [ -f "$TE_DIR/$file3" ] || wget -O "$TE_DIR/$file3" "$url3"
-    
-    # Text encoder exact version
-    file4="umt5_xxl_fp16.safetensors"
-    url3="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/${file4}"
-    [ -f "$TE_DIR/$file4" ] || wget -O "$TE_DIR/$file4" "$url3"
 
+    # 4. UMT5 text encoder (exact FP16 version required by most workflows)
+    file4="umt5_xxl_fp16.safetensors"
+    url4="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/${file4}"
+    [ -f "$TE_DIR/$file4" ] || wget -O "$TE_DIR/$file4" "$url4"
 }
 
 create_startup_script() {
