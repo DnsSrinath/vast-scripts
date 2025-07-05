@@ -31,10 +31,9 @@ info() {
     echo -e "${BLUE}[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1${NC}"
 }
 
-# Check if running as root
+# Running as root — expected for Vast.ai. Proceeding...
 if [[ $EUID -eq 0 ]]; then
-   error "This script should not be run as root for security reasons"
-   exit 1
+   info "Running as root user (Vast.ai default). Proceeding with installation..."
 fi
 
 # System requirements check
