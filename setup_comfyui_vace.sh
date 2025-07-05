@@ -121,7 +121,7 @@ install_wan_nodes() {
         (cd ComfyUI-Advanced-ControlNet && python3 -m pip install -r requirements.txt || true)
 
     [[ -d ComfyUI-WanVideoWrapper ]] || \
-        git clone https://github.com/QuantFactory/ComfyUI-WanVideoWrapper.git && \
+        git clone https://github.com/QuantFactory/ComfyUI-Wan2.1_VideoWrapper.git ComfyUI-WanVideoWrapper && \
         (cd ComfyUI-WanVideoWrapper && python3 -m pip install -r requirements.txt || true)
 
     log "WAN + video nodes setup complete."
