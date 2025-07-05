@@ -3,7 +3,7 @@
 # ==============================================================================
 # 🧠 WAN 2.1 + VACE ComfyUI Setup Script for Vast.ai (Video-to-Video Ready)
 # 🔧 Includes ComfyUI, ComfyUI-Manager, WanVideoWrapper, and official VACE models
-# 🔁 Auto-starts ComfyUI in a tmux session
+# 🔁 Auto-starts ComfyUI in a tmux session (with duplicate session check)
 #
 # 📦 Install:
 # wget -O setup_comfyui_vace.sh https://raw.githubusercontent.com/DnsSrinath/vast-scripts/main/setup_comfyui_vace.sh
@@ -96,32 +96,60 @@ download_wan_vace_models() {
 
     mkdir -p "$DM_DIR" "$VAE_DIR" "$TE_DIR"
 
-    # 1. WAN 2.1 VACE 14B FP16 diffusion model
-    file1="wan2.1_vace_14B_fp16.safetensors"
-    url1="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/${file1}"
-    [ -f "$DM_DIR/$file1" ] || wget -O "$DM_DIR/$file1" "$url1"
+    check_and_download() {
+        local file=$1
+        local url=$2
+        local path=$3
+        local expected_min_size=$4
 
-    # 2. VAE
-    file2="wan_2.1_vae.safetensors"
-    url2="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/${file2}"
-    [ -f "$VAE_DIR/$file2" ] || wget -O "$VAE_DIR/$file2" "$url2"
+        if [ -f "$path/$file" ]; then
+            actual_size=$(stat -c %s "$path/$file")
+            if [ "$actual_size" -ge "$expected_min_size" ]; then
+                log "$file already exists and size looks correct. Skipping."
+                return
+            else
+                warn "$file exists but may be corrupted. Re-downloading."
+                rm -f "$path/$file"
+            fi
+        fi
 
-    # 3. UMT5 text encoder (scaled FP8 version)
-    file3="umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-    url3="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/${file3}"
-    [ -f "$TE_DIR/$file3" ] || wget -O "$TE_DIR/$file3" "$url3"
+        log "Downloading $file..."
+        wget -O "$path/$file" "$url"
+        actual_size=$(stat -c %s "$path/$file")
+        if [ "$actual_size" -lt "$expected_min_size" ]; then
+            warn "$file downloaded but size is smaller than expected!"
+        fi
+    }
 
-    # 4. UMT5 text encoder (exact FP16 version required by most workflows)
-    file4="umt5_xxl_fp16.safetensors"
-    url4="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/${file4}"
-    [ -f "$TE_DIR/$file4" ] || wget -O "$TE_DIR/$file4" "$url4"
+    check_and_download "wan2.1_vace_14B_fp16.safetensors" \
+        "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_vace_14B_fp16.safetensors" \
+        "$DM_DIR" 8500000000
+
+    check_and_download "wan_2.1_vae.safetensors" \
+        "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors" \
+        "$VAE_DIR" 550000000
+
+    check_and_download "umt5_xxl_fp8_e4m3fn_scaled.safetensors" \
+        "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors" \
+        "$TE_DIR" 9000000000
+
+    check_and_download "umt5_xxl_fp16.safetensors" \
+        "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors" \
+        "$TE_DIR" 18000000000
 }
 
 create_startup_script() {
     log "Creating ComfyUI tmux startup script..."
     cat <<EOF > /workspace/start_comfyui.sh
 #!/bin/bash
-tmux new-session -d -s comfy "cd /workspace/ComfyUI && python3 main.py --listen --port 8188"
+SESSION=comfy
+tmux has-session -t \$SESSION 2>/dev/null
+if [ \$? -eq 0 ]; then
+  echo "Killing existing tmux session: \$SESSION"
+  tmux kill-session -t \$SESSION
+fi
+echo "Starting ComfyUI..."
+tmux new-session -d -s \$SESSION "cd /workspace/ComfyUI && python3 main.py --listen --port 8188"
 EOF
     chmod +x /workspace/start_comfyui.sh
 }
