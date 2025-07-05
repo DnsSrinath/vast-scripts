@@ -181,6 +181,41 @@ download_default_models() {
     fi
 }
 
+download_wan_vace_models() {
+  log "Downloading WAN‑VACE required models..."
+
+  DM_DIR="/workspace/ComfyUI/models/diffusion_models"
+  TE_DIR="/workspace/ComfyUI/models/text_encoders"
+  VAE_DIR="/workspace/ComfyUI/models/vae"
+
+  mkdir -p "$DM_DIR" "$TE_DIR" "$VAE_DIR"
+
+  # WAN VACE 14B diffusion model
+  file1="wan2.1_vace_14B_fp16.safetensors"
+  url1="https://huggingface.co/QuantFactory/Wan2.1_VACE/resolve/main/${file1}"
+  if [ ! -f "$DM_DIR/$file1" ]; then
+    wget -O "$DM_DIR/$file1" "$url1" && log "Downloaded $file1"
+  else info "$file1 exists, skipping."
+  fi
+
+  # VAE
+  file2="wan_2.1_vae.safetensors"
+  url2="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/$file2"
+  if [ ! -f "$VAE_DIR/$file2" ]; then
+    wget -O "$VAE_DIR/$file2" "$url2" && log "Downloaded $file2"
+  else info "$file2 exists, skipping."
+  fi
+
+  # Text encoder (UMT5 XX-L FP8 scaled is smaller)
+  file3="umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+  url3="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/$file3"
+  if [ ! -f "$TE_DIR/$file3" ]; then
+    wget -O "$TE_DIR/$file3" "$url3" && log "Downloaded $file3"
+  else info "$file3 exists, skipping."
+  fi
+}
+
+
 # ========== STARTUP SCRIPT ==========
 create_startup_script() {
     log "Creating tmux startup script..."
@@ -208,7 +243,7 @@ main() {
     install_gguf
     install_wan_nodes
     download_vace_model
-    download_default_models
+    download_wan_vace_models
     create_startup_script
 
     log "✅ Setup complete!"
