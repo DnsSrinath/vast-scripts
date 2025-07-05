@@ -110,6 +110,12 @@ download_wan_vace_models() {
     file3="umt5_xxl_fp8_e4m3fn_scaled.safetensors"
     url3="https://huggingface.co/QuantFactory/Wan2.1_Models/resolve/main/${file3}"
     [ -f "$TE_DIR/$file3" ] || wget -O "$TE_DIR/$file3" "$url3"
+    
+    # Text encoder exact version
+    file4="umt5_xxl_fp16.safetensors"
+    url3="https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/${file4}"
+    [ -f "$TE_DIR/$file4" ] || wget -O "$TE_DIR/$file4" "$url3"
+
 }
 
 create_startup_script() {
