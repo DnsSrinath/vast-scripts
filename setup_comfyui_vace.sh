@@ -183,14 +183,14 @@ if [ \$? -eq 0 ]; then
   tmux kill-session -t \$SESSION
 fi
 echo "Starting ComfyUI..."
-tmux new-session -d -s \$SESSION "cd /workspace/ComfyUI && python3 main.py --listen --port 8188"
+tmux new-session -d -s \$SESSION "cd /workspace/ComfyUI && python3 main.py --listen --port 8081"
 EOF
     chmod +x /workspace/start_comfyui.sh
 }
 
 show_access_url() {
     PUBLIC_IP=$(curl -s ifconfig.me || echo "localhost")
-    echo -e "\n${YELLOW}🟢 Access ComfyUI at: http://$PUBLIC_IP:8188 (or mapped Vast.ai port)${NC}"
+    echo -e "\n${YELLOW}🟢 Access ComfyUI at: http://$PUBLIC_IP:8081 (or mapped Vast.ai port)${NC}"
 }
 
 main() {
