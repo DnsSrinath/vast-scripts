@@ -35,7 +35,7 @@ There is no Indian law called EPCO. Most likely intended meanings:
 - IPC, the Indian Penal Code 1860, replaced on 1 July 2024 by the Bharatiya Nyaya Sanhita 2023.
 - EPFO, the Employees' Provident Fund Organisation and the rules under the EPF and Miscellaneous Provisions Act 1952.
 - EPCO, the Environmental Planning and Coordination Organisation, a Madhya Pradesh government body in Bhopal.
-A research agent was assigned to settle this and write chapter 6. Its output had not arrived when work stopped.
+The reforms agent's verdict (see `drafts/06-...`): most likely EPFO, because "PF rules" is how people phrase it and it is the law touching the most salaried Indians. Madhya Pradesh's EPCO is a real body but makes no rules.
 
 ## 5. Unreviewed drafts saved in `drafts/`
 
@@ -47,17 +47,17 @@ These came from research agents and were copied here so they survive the ephemer
 | `drafts/03-law-books-explained.DRAFT-complete-unreviewed.md` | Arrived complete after the stop (about 128 KB). All 20 numbered law groups plus 11 special criminal laws, a bare-Acts list, free portals and bibliography. Key verified dates: Labour Codes in force 21 Nov 2025 with final Central Rules 8 May 2026; Income-tax Act 2025 in force 1 Apr 2026 (536 sections, 23 chapters, 16 schedules); DPDP Act phased from 14 Nov 2025 with full compliance 14 May 2027; GST 2.0 from 22 Sep 2025; Gujarat UCC Bill passed Mar 2026 and Assam UCC Bill passed May 2026 (assent and commencement unverified); IBC Amendment Act 2026 from 6 Apr 2026. Agent could not verify: BNS 106(2) hit-and-run notification status, final Supreme Court ruling on Waqf amendments, RTI section 8(1)(j) challenge, current consumer commission money limits, and some section counts for older Acts. |
 | `drafts/00-architect-crosscheck-notes.md` | Architect's own verification notes with sources. |
 | `drafts/05-everyday-situations.DRAFT-complete-unreviewed.md` | Arrived after the stop. Agent reported complete: about 12,300 words, 40 situations across home and family, money, work, police, property, government, digital, environment, each with law, steps, helpline and a myth busted, plus a helplines table and sources. Agent flags to re-check: helpline numbers 15100 and 155260 were not confirmed and were left out of its table (15100 is NALSA's published number, verify); RBI's new digital-fraud liability rules reportedly start January 2027; DPDP Act core rights are on a staggered rollout; Labour Codes were notified in force from 21 November 2025 but state rules were still settling; Model Tenancy Act adopter list; IRDAI and consumer helpline numbers taken from a single source. |
+| `drafts/06-reforms-and-epco.DRAFT-complete-unreviewed.md` | Arrived complete after the stop (801 lines, about 130 cited URLs). EPCO verdict: most likely EPFO ("PF rules"), since Madhya Pradesh's EPCO makes no rules; IPC and others documented as alternatives. Corrections it brings: all four Labour Codes in force 21 Nov 2025 and new EPF, EPS and EDLI Schemes 2026 effective 1 July 2026; the Jan Vishwas 2025 Bill was withdrawn 17 Mar 2026 and the Jan Vishwas Act 2026 (784 provisions, 79 Acts, 717 decriminalised) replaced it; 1,577 laws repealed since May 2014 per the Law Minister in Dec 2025; Income-tax Act 2025 cut sections 819 to 536, rules 511 to 333, forms 399 to 190; EPF wage ceiling still 15,000 rupees with a 25,000 rupee rise reportedly approved but not notified; Model Tenancy Act adopted by only 4 states. Includes a 10-point framework for bringing law to the common man. Agent flags 15 unverified items, notably the Jan Vishwas 2026 assent date. |
 | `drafts/01-count-of-laws.DRAFT-complete-unreviewed.md` | Arrived after the stop. Agent reported complete: 705 lines, every figure tagged verified-primary, verified-secondary or estimate, with a list of seven items to re-confirm. Key updates it brings: India Code's relaunched portal (13 Aug 2026) showed 836 central Acts, 1,410 state Acts and 77,072 sections on 28 Aug 2026, slightly below the 859 list figure; 6,779 central Acts enacted since 1834; the Jan Vishwas Act 2026 (assent 7 Apr 2026) decriminalised 717 provisions across 79 central Acts after the 2025 Bill was withdrawn; Law Commission has 289 reports; oldest laws in force are two 1836 Bengal Acts; the state-Act total is an unresolved contradiction between India Code's 1,410 and five states alone listing 3,453. |
 
 ## 6. Not started or not received
 
-- Chapter 6, reforms, simplification, EPCO disambiguation, 10-point plan (agent was running; no file received).
 - Chapter 0, "start here": the roughly 30 laws that touch every citizen. Architect synthesis, not begun.
 - Chapter 7, consolidated sources and where to read laws free. Not begun.
 
 ## 7. How to resume
 
-1. Check whether the remaining agents' files ever landed in the session scratchpad (`scratchpad/research/06-reforms-and-epco.md`). If the container is gone, re-run that research brief; the prompts are recorded in the session transcript.
+1. All six research tracks have delivered. Nothing needs re-running.
 2. Review each draft against its own sources list, fix dates, then move it from `drafts/` to the chapter filename listed in `README.md`.
 3. Write chapter 0 and chapter 7 from the finished chapters.
 4. Commit and push to the same branch. Open a pull request only if asked.
