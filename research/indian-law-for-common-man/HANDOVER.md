@@ -46,10 +46,10 @@ These came from research agents and were copied here so they survive the ephemer
 | `drafts/04-how-law-works.DRAFT-complete-unreviewed.md` | Agent reported complete: 325 lines, 9 sections plus sources. Covers types of law, how a law is made, enforcers, courts, case journeys, digital access, legal aid, Centre vs State, language of law. Agent flagged as soft: e-SCR translation counts, BNSS timelines, Pre-Legislative Consultation statistics, the "20 states with Right to Public Services Acts" figure, Lok Adalat statistics. |
 | `drafts/03-law-books-explained.DRAFT-partial.md` | Agent still writing when stopped (418 lines at copy time). Covers criminal laws (BNS, BNSS, BSA) and civil laws up to the RTI Act. Family law, labour codes, tax and company law sections may be missing. |
 | `drafts/00-architect-crosscheck-notes.md` | Architect's own verification notes with sources. |
+| `drafts/01-count-of-laws.DRAFT-complete-unreviewed.md` | Arrived after the stop. Agent reported complete: 705 lines, every figure tagged verified-primary, verified-secondary or estimate, with a list of seven items to re-confirm. Key updates it brings: India Code's relaunched portal (13 Aug 2026) showed 836 central Acts, 1,410 state Acts and 77,072 sections on 28 Aug 2026, slightly below the 859 list figure; 6,779 central Acts enacted since 1834; the Jan Vishwas Act 2026 (assent 7 Apr 2026) decriminalised 717 provisions across 79 central Acts after the 2025 Bill was withdrawn; Law Commission has 289 reports; oldest laws in force are two 1836 Bengal Acts; the state-Act total is an unresolved contradiction between India Code's 1,410 and five states alone listing 3,453. |
 
 ## 6. Not started or not received
 
-- Chapter 1, exact counts of laws (agent was running; no file received).
 - Chapter 5, forty everyday situations with helplines (agent was running; no file received).
 - Chapter 6, reforms, simplification, EPCO disambiguation, 10-point plan (agent was running; no file received).
 - Chapter 0, "start here": the roughly 30 laws that touch every citizen. Architect synthesis, not begun.
@@ -57,7 +57,7 @@ These came from research agents and were copied here so they survive the ephemer
 
 ## 7. How to resume
 
-1. Check whether the remaining agents' files ever landed in the session scratchpad (`scratchpad/research/01-count-of-laws.md`, `05-everyday-situations.md`, `06-reforms-and-epco.md`). If the container is gone, re-run those three research briefs; the prompts are recorded in the session transcript.
+1. Check whether the remaining agents' files ever landed in the session scratchpad (`scratchpad/research/05-everyday-situations.md`, `06-reforms-and-epco.md`). If the container is gone, re-run those two research briefs; the prompts are recorded in the session transcript.
 2. Review each draft against its own sources list, fix dates, then move it from `drafts/` to the chapter filename listed in `README.md`.
 3. Write chapter 0 and chapter 7 from the finished chapters.
 4. Commit and push to the same branch. Open a pull request only if asked.
