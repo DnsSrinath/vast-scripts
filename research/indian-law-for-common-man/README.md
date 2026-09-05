@@ -8,7 +8,7 @@ Research date: 5 September 2026. This is analysis and explanation only, not lega
 
 | What | Number (Sept 2026) | How sure |
 |---|---|---|
-| Constitution of India | 1 (about 470 Articles, 25 Parts, 12 Schedules, 106 amendments) | Verified |
+| Constitution of India | 1 (about 448 Articles, 25 Parts, 12 Schedules, 106 amendments) | Verified |
 | Central Acts in force (made by Parliament) | 859 (845 live + 14 "spent"), not counting yearly Finance Acts | Verified (Ministry of Law & Justice / India Code) |
 | State Acts in force (made by 28 states + UTs) | Several thousand; no single official total | Estimate |
 | Rules, regulations, notifications under those Acts | Tens of thousands | Estimate |
